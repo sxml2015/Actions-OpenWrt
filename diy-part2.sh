@@ -13,12 +13,12 @@
 #移除不用软件包
 rm -rf package/lean/luci-app-dockerman
 rm -rf package/lean/luci-app-wrtbwmon
-#rm -rf feeds/packages/net/openssh
+rm -rf feeds/packages/net/openssh
 
 #添加额外软件包
 svn co https://github.com/openwrt/packages/trunk/net/openssh package/openssh
 svn co https://github.com/openwrt/packages/trunk/libs/libfido2 package/libfido2
-svn co https://github.com/openwrt/packages/trunk/libs/libcbor package/libcbor
+#svn co https://github.com/openwrt/packages/trunk/libs/libcbor package/libcbor
 
 #京东
 git clone https://github.com/jerrykuku/luci-app-jd-dailybonus.git package/luci-app-jd-dailybonus
@@ -55,7 +55,7 @@ svn co https://github.com/xiaorouji/openwrt-passwall/trunk/trojan-plus package/t
 svn co https://github.com/fw876/helloworld/trunk/xray-core package/xray-core
 svn co https://github.com/fw876/helloworld/trunk/xray-plugin package/xray-plugin
 svn co https://github.com/fw876/helloworld/trunk/shadowsocks-rust package/shadowsocks-rust
-svn co https://github.com/fw876/helloworld/trunk/v2ray-plugin package/v2ray-plugin
+#svn co https://github.com/fw876/helloworld/trunk/v2ray-plugin package/v2ray-plugin
 #svn co https://github.com/immortalwrt/luci/branches/openwrt-18.06/applications/luci-app-socat package/luci-app-socat
 
 #luci-app-filebrowser文件助手（可在线查看路由器上的文件）
