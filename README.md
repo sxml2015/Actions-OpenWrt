@@ -16,7 +16,7 @@
 
    Settings → Secrets → New secret
 
-如果需要telegram，电报推送消息 设置
+如果需要telegram，电报推送消息 设置方法
 
    https://github.com/danshui-git/shuoming/blob/master/bot.md 
    
