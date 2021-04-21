@@ -74,7 +74,7 @@ https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases
 
 修改 aarch64/getImgs.sh
 
-wget $(curl -s https://api.github.com/repos/sxml/Actions-OpenWrt/releases/39391954 | grep browser_download_url | cut -d '"' -f 4)
+wget $(curl -s https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases/39391954 | grep browser_download_url | cut -d '"' -f 4)
 
 
 【4】Actions 运行 
@@ -91,7 +91,7 @@ https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases
 
 修改 ARMv8_Build.yml  ID
 
- sudo wget $(curl -s https://api.github.com/repos/sxml/Actions-OpenWrt/releases/39397290 | grep browser_download_url | cut -d '"' -f 4)
+ sudo wget $(curl -s https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases/39397290 | grep browser_download_url | cut -d '"' -f 4)
 
 
 【6】运行 ARMv8_Build.yml 打包 
