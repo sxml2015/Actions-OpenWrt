@@ -13,7 +13,7 @@
 #移除不用软件包
 rm -rf package/lean/luci-app-dockerman
 rm -rf package/lean/luci-app-wrtbwmon
-#rm -rf feeds/packages/net/openssh
+rm -rf packages/net/openssh
 
 #添加额外软件包
 svn co https://github.com/openwrt/packages/trunk/net/openssh package/openssh
