@@ -23,6 +23,7 @@
   .yml文件里开启
     
     #- name: Telegram notification
+    
       
 【2】在Releases  新建标签 Files4Compile 
 
@@ -63,6 +64,7 @@ mk_openwrt_src_xxx.tar
 
 
 
+
 【3】获取 Files4Compile  ID
 
 github账号 Actions-OpenWrt 项目名 sxml2015/Actions-OpenWrt
@@ -74,11 +76,13 @@ https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases
 
 wget $(curl -s https://api.github.com/repos/sxml/Actions-OpenWrt/releases/39391954 | grep browser_download_url | cut -d '"' -f 4)
 
+
 【4】Actions 运行 
 
   ARMv8_SFE.yml 编译
   
   ARMv8_FOL.yml 编译 
+
 
 【5】获取 Files4Build ID  修改ARMv8_Build.yml
 
@@ -88,7 +92,8 @@ https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases
 修改 ARMv8_Build.yml  ID
 
  sudo wget $(curl -s https://api.github.com/repos/sxml/Actions-OpenWrt/releases/39397290 | grep browser_download_url | cut -d '"' -f 4)
- 
+
+
 【6】运行 ARMv8_Build.yml 打包 
 
 
