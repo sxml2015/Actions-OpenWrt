@@ -18,6 +18,7 @@ rm -rf package/lean/luci-app-wrtbwmon
 #添加额外软件包
 svn co https://github.com/openwrt/packages/trunk/net/openssh package/openssh
 svn co https://github.com/openwrt/packages/trunk/libs/libfido2 package/libfido2
+svn co https://github.com/openwrt/packages/trunk/libs/libcbor package/libcbor
 
 #京东
 git clone https://github.com/jerrykuku/luci-app-jd-dailybonus.git package/luci-app-jd-dailybonus
