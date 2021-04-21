@@ -11,14 +11,12 @@
 #sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
 
 #移除不用软件包
-rm -rf feeds/packages/net/openssh
 rm -rf package/lean/luci-app-dockerman
 rm -rf package/lean/luci-app-wrtbwmon
 
 #添加额外软件包
 svn co https://github.com/openwrt/packages/trunk/net/openssh package/openssh
 svn co https://github.com/openwrt/packages/trunk/libs/libfido2 package/libfido2
-svn co https://github.com/openwrt/packages/trunk/libs/libcbor package/libcbor
 
 #京东
 git clone https://github.com/jerrykuku/luci-app-jd-dailybonus.git package/luci-app-jd-dailybonus
@@ -30,9 +28,9 @@ git clone https://github.com/jerrykuku/lua-maxminddb.git package/lua-maxminddb
 git clone https://github.com/kongfl888/luci-app-adguardhome.git package/luci-app-adguardhome
 
 # 编译 po2lmo (如果有po2lmo可跳过)
-pushd package/luci-app-openclash/tools/po2lmo
-make && sudo make install
-popd
+#pushd package/luci-app-openclash/tools/po2lmo
+#make && sudo make install
+#popd
 
 #Bypass
 #git clone https://github.com/garypang13/luci-app-bypass package/luci-app-bypass
