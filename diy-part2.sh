@@ -13,11 +13,12 @@
 #移除不用软件包
 rm -rf package/lean/luci-app-dockerman
 rm -rf package/lean/luci-app-wrtbwmon
-rm -rf feeds/packages/net/openssh
+rm -rf package/lean/luci-theme-bootstrap
+#rm -rf feeds/packages/net/openssh
 
 #添加额外软件包
-svn co https://github.com/openwrt/packages/trunk/net/openssh package/openssh
-svn co https://github.com/openwrt/packages/trunk/libs/libfido2 package/libfido2
+#svn co https://github.com/openwrt/packages/trunk/net/openssh package/openssh
+#svn co https://github.com/openwrt/packages/trunk/libs/libfido2 package/libfido2
 #svn co https://github.com/openwrt/packages/trunk/libs/libcbor package/libcbor
 
 #京东
@@ -30,9 +31,9 @@ git clone https://github.com/jerrykuku/lua-maxminddb.git package/lua-maxminddb
 git clone https://github.com/kongfl888/luci-app-adguardhome.git package/luci-app-adguardhome
 
 # 编译 po2lmo (如果有po2lmo可跳过)
-#pushd package/luci-app-openclash/tools/po2lmo
-#make && sudo make install
-#popd
+pushd package/luci-app-openclash/tools/po2lmo
+make && sudo make install
+popd
 
 #Bypass
 #git clone https://github.com/garypang13/luci-app-bypass package/luci-app-bypass
@@ -79,7 +80,7 @@ git reset --hard ff7773abbf71120fc39a276393b29ba47353a7e2 && cp -r luci-app-wrtb
 cd ..
 
 # 主题themes
-svn co https://github.com/kenzok8/openwrt-packages/trunk/luci-theme-edge package/luci-theme-edge
+#svn co https://github.com/kenzok8/openwrt-packages/trunk/luci-theme-edge package/luci-theme-edge
 svn co https://github.com/rosywrt/luci-theme-rosy/trunk/luci-theme-rosy package/luci-theme-rosy
 
 #luci-app-koolddns阿里解析
