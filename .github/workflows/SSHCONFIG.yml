@@ -8,12 +8,10 @@ on:
         required: false
         default: 'false'
 
-
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
   CONFIG_FILE: aarch64/SSHCONFIG.config
-  #CONFIG_FILE: aarch64/ARMv8_SF.config   
   DIY_P2_SH: diy-part2.sh
   SSH_ACTIONS: true
   UPLOAD_CONFIG: true
@@ -89,14 +87,15 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        ./scripts/diffconfig.sh > ${GITHUB_WORKSPACE}/config.txt
+        ./scripts/diffconfig.sh > $GITHUB_ENV
+        echo "CONFIG_CONTENT=$(cat .config)" >> $GITHUB_ENV
     
     - name: 上传.config配置文件
       uses: actions/upload-artifact@master
       if: env.UPLOAD_CONFIG == 'true'
       with:
         name: ${{ env.FILE_NAME }}-${{ env.DATE1 }}-
-        path: config.txt
+        path: $GITHUB_ENV
         
     - name: 检查空间使用情况
       if: (!cancelled())
