@@ -6,7 +6,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # Description: Build OpenWrt using GitHub Actions
 #
-# 2022.11.04  Flippy打包
+# 2023.04.10  Flippy打包
 #
 name: Flippy打包
 
