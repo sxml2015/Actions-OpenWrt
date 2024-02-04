@@ -37,13 +37,13 @@
 
       手动上传 F大 打包文件
       
-【3】获取 Files 标签ID  （F大打包文件）  https://api.github.com/repos/sxml/Actions-OpenWrt/releases
+【3】获取 Files 标签ID  （F大打包文件）  https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases
                
        https://api.github.com/repos/（github账号）/（ 项目名称）/releases 
   
      修改 aarch64/getImgs.sh
 
-    wget $(curl -s https://api.github.com/repos/sxml/Actions-OpenWrt/releases/（Files 标签ID）
+    wget $(curl -s https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases/（Files 标签ID）
 
 【4】Actions
 
@@ -54,7 +54,7 @@
 
       修改 Flippy_Openwrt.yml 
   
-     sudo wget $(curl -s https://api.github.com/repos/sxml/Actions-OpenWrt/releases/（Build 标签ID )
+     sudo wget $(curl -s https://api.github.com/repos/sxml2015/Actions-OpenWrt/releases/（Build 标签ID )
      
      
 【6】运行 Flippy打包 （Flippy_Openwrt.yml）
