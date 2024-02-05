@@ -22,18 +22,19 @@ cp -rf kenzok8-packages/luci-app-smartdns package/luci-app-smartdns
 git clone --depth=1 https://github.com/kenzok8/small-package.git small-package
 cp -rf small-package/gost package/gost
 cp -rf small-package/luci-app-gost package/luci-app-gost
-cp -rf small-package/sagernet-core package/sagernet-core
+#cp -rf small-package/sagernet-core package/sagernet-core
+cp -rf small-package/v2ray-geodata package/v2ray-geodata
 
 # 克隆 fw876 仓库
 git clone --depth=1 -b main https://github.com/fw876/helloworld.git
 cp -rf helloworld/luci-app-ssr-plus package/luci-app-ssr-plus
 cp -rf helloworld/xray-core package/xray-core
 cp -rf helloworld/xray-plugin package/xray-plugin
-cp -rf helloworld/shadowsocks-rust package/shadowsocks-rust
+#cp -rf helloworld/shadowsocks-rust package/shadowsocks-rust
 cp -rf helloworld/shadowsocksr-libev package/shadowsocksr-libev
 cp -rf helloworld/v2ray-plugin package/v2ray-plugin
 cp -rf helloworld/v2ray-core package/v2ray-core
-cp -rf helloworld/v2ray-geodata package/v2ray-geodata
+#cp -rf helloworld/v2ray-geodata package/v2ray-geodata
 cp -rf helloworld/trojan package/trojan
 #cp -rf helloworld/sagernet-core package/sagernet-core
 cp -rf helloworld/microsocks package/microsocks
@@ -81,11 +82,17 @@ cp -rf fileassistant/luci-app-fileassistant package/luci-app-fileassistant
 #git clone https://github.com/sxml/luci-app-fileassistant.git package/luci-app-fileassistant
 #rm -rf fileassistant
 
+# 临时修复xfsprogs
+sed -i 's/TARGET_CFLAGS += -DHAVE_MAP_SYNC/TARGET_CFLAGS += -DHAVE_MAP_SYNC -D_LARGEFILE64_SOURCE/' feeds/packages/utils/xfsprogs/Makefile
+
+#shadowsocks-rust
+git clone --depth=1 https://github.com/breakings/OpenWrt OpenWrt/general/shadowsocks-rust
+cp -rf OpenWrt/general/shadowsocks-rust package/shadowsocks-rust
+
 #添加luci-app-amlogic
 git clone --depth=1 https://github.com/ophub/luci-app-amlogic.git
 cp -rf luci-app-amlogic/luci-app-amlogic package/luci-app-amlogic
 #rm -rf luci-app-amlogic
-
 #修改晶晨宝盒默认配置
 # 1.设置OpenWrt 文件的下载仓库
 sed -i "s|https.*/OpenWrt|https://github.com/sxml/Actions-OpenWrt|g" package/luci-app-amlogic/root/etc/config/amlogic
@@ -108,9 +115,6 @@ find package/*/ -maxdepth 2 -path "*/Makefile" | xargs -i sed -i 's/include\ \.\
 find package/*/ -maxdepth 2 -path "*/Makefile" | xargs -i sed -i 's/include\ \.\.\/\.\.\/lang\/golang\/golang\-package\.mk/include \$(TOPDIR)\/feeds\/packages\/lang\/golang\/golang\-package\.mk/g' {}
 find package/*/ -maxdepth 2 -path "*/Makefile" | xargs -i sed -i 's/PKG_SOURCE_URL:=\@GHREPO/PKG_SOURCE_URL:=https:\/\/github\.com/g' {}
 find package/*/ -maxdepth 2 -path "*/Makefile" | xargs -i sed -i 's/PKG_SOURCE_URL:=\@GHCODELOAD/PKG_SOURCE_URL:=https:\/\/codeload\.github\.com/g' {}
-
-# 临时修复xfsprogs
-sed -i 's/TARGET_CFLAGS += -DHAVE_MAP_SYNC/TARGET_CFLAGS += -DHAVE_MAP_SYNC -D_LARGEFILE64_SOURCE/' feeds/packages/utils/xfsprogs/Makefile
 
 #修改perl
 #sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=$(PERL_VERSION)/g' package/lang/perl/Makefile
