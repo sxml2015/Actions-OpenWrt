@@ -30,7 +30,7 @@ git clone --depth=1 -b main https://github.com/fw876/helloworld.git
 cp -rf helloworld/luci-app-ssr-plus package/luci-app-ssr-plus
 cp -rf helloworld/xray-core package/xray-core
 cp -rf helloworld/xray-plugin package/xray-plugin
-#cp -rf helloworld/shadowsocks-rust package/shadowsocks-rust
+cp -rf helloworld/shadowsocks-rust package/shadowsocks-rust
 cp -rf helloworld/shadowsocksr-libev package/shadowsocksr-libev
 cp -rf helloworld/v2ray-plugin package/v2ray-plugin
 cp -rf helloworld/v2ray-core package/v2ray-core
@@ -86,8 +86,8 @@ cp -rf fileassistant/luci-app-fileassistant package/luci-app-fileassistant
 sed -i 's/TARGET_CFLAGS += -DHAVE_MAP_SYNC/TARGET_CFLAGS += -DHAVE_MAP_SYNC -D_LARGEFILE64_SOURCE/' feeds/packages/utils/xfsprogs/Makefile
 
 #shadowsocks-rust
-git clone --depth=1 https://github.com/breakings/OpenWrt OpenWrt/general/shadowsocks-rust
-cp -rf OpenWrt/general/shadowsocks-rust package/shadowsocks-rust
+#git clone --depth=1 https://github.com/breakings/OpenWrt OpenWrt/general/shadowsocks-rust
+#cp -rf OpenWrt/general/shadowsocks-rust package/shadowsocks-rust
 
 #添加luci-app-amlogic
 git clone --depth=1 https://github.com/ophub/luci-app-amlogic.git
