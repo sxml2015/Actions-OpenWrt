@@ -83,7 +83,12 @@ git clone https://github.com/sxml/luci-app-fileassistant.git package/luci-app-fi
 #rm -rf fileassistant
 
 # 临时修复xfsprogs
-sed -i 's/TARGET_CFLAGS += -DHAVE_MAP_SYNC/TARGET_CFLAGS += -DHAVE_MAP_SYNC -D_LARGEFILE64_SOURCE/' feeds/packages/utils/xfsprogs/Makefile
+#sed -i 's/TARGET_CFLAGS += -DHAVE_MAP_SYNC/TARGET_CFLAGS += -DHAVE_MAP_SYNC -D_LARGEFILE64_SOURCE/' feeds/packages/utils/xfsprogs/Makefile
+# Fix xfsprogs build error
+sed -i 's|TARGET_CFLAGS += -DHAVE_MAP_SYNC.*|TARGET_CFLAGS += -DHAVE_MAP_SYNC $(if $(CONFIG_USE_MUSL),-D_LARGEFILE64_SOURCE)|' feeds/packages/utils/xfsprogs/Makefile
+
+# Add autocore support for armvirt
+sed -i 's/TARGET_rockchip/TARGET_rockchip\|\|TARGET_armvirt/g' package/lean/autocore/Makefile
 
 #shadowsocks-rust
 #git clone --depth=1 https://github.com/breakings/OpenWrt OpenWrt/general/shadowsocks-rust
