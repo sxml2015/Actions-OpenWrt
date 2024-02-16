@@ -119,6 +119,14 @@ sed -i 's/PKG_HASH:=.*/PKG_HASH:=ce4b6a6655431147624aaf582632a36fe1ade262d5fab38
 sed -i 's/PKG_RELEASE:=.*/PKG_RELEASE:=1/g' feeds/packages/net/curl/Makefile
 #rm -rf feeds/packages/net/curl
 
+# 修改libxml2的Makefile，启用shared
+sed -i '/HOST_CONFIGURE_ARGS/ s/--disable-shared/--enable-shared/' feeds/packages/libs/libxml2/Makefile
+# 修改libxslt的Makefile，指定libxml的库路径和头文件路径
+sed -i '/HOST_CONFIGURE_ARGS/ a\--with-libxml-libs-prefix=$(STAGING_DIR_HOSTPKG)/lib' feeds/packages/libs/libxslt/Makefile
+sed -i '/HOST_CONFIGURE_ARGS/ a\--with-libxml-include-prefix=$(STAGING_DIR_HOSTPKG)/include/libxml2/' feeds/packages/libs/libxslt/Makefile
+# 修改xsltproc的Makefile，链接libxml2库
+sed -i 's|LIBXML_LIBS =|LIBXML_LIBS = -lxml2 -L$(STAGING_DIR_HOSTPKG)/lib|' build_dir/hostpkg/libxslt-1.1.34/xsltproc/Makefile
+
 #修改makefile
 find package/*/ -maxdepth 2 -path "*/Makefile" | xargs -i sed -i 's/include\ \.\.\/\.\.\/luci\.mk/include \$(TOPDIR)\/feeds\/luci\/luci\.mk/g' {}
 find package/*/ -maxdepth 2 -path "*/Makefile" | xargs -i sed -i 's/include\ \.\.\/\.\.\/lang\/golang\/golang\-package\.mk/include \$(TOPDIR)\/feeds\/packages\/lang\/golang\/golang\-package\.mk/g' {}
