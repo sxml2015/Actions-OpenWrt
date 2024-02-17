@@ -107,8 +107,8 @@ sed -i 's|TARGET_CFLAGS += -DHAVE_MAP_SYNC.*|TARGET_CFLAGS += -DHAVE_MAP_SYNC $(
 #sed -i '78i\TARGET_CFLAGS += -D_LARGEFILE64_SOURCE\' feeds/packages/utils/cryptsetup/Makefile
 
 # perl
-#rm -rf feeds/packages/lang/perl
-#cp -rf $GITHUB_WORKSPACE/general/perl feeds/packages/lang
+rm -rf feeds/packages/lang/perl
+cp -rf $GITHUB_WORKSPACE/general/perl feeds/packages/lang
 
 # shadowsocks-rust
 cp -rf $GITHUB_WORKSPACE/general/shadowsocks-rust package/shadowsocks-rust
