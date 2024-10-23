@@ -1,0 +1,45 @@
+name: Remove Old Artifacts and Caches
+
+on:
+  workflow_dispatch: # 手动触发
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Step 1: 清理旧的Actions缓存
+    - name: 清理旧的缓存
+      uses: actions/cache@v3
+      with:
+        path: |
+          ./dl
+          ./build_dir
+      continue-on-error: true
+      run: |
+        echo "正在清理缓存..."
+        # GitHub 会自动管理并删除过期的缓存
+        # 如果你需要清理特定缓存，可以添加逻辑获取 cache-key 并删除
+        curl -X DELETE "https://api.github.com/repos/${{ github.repository }}/actions/caches?key=cache-key" \
+        -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+        -H "Accept: application/vnd.github.v3+json"
+        echo "缓存清理完毕"
+
+    # Step 2: 删除旧的Artifacts
+    - name: 获取旧的Artifacts
+      run: |
+        echo "获取旧的Artifacts..."
+        artifacts=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}/actions/artifacts)
+        echo "Artifacts获取成功"
+
+    - name: 删除旧的Artifacts
+      run: |
+        echo "正在删除旧的Artifacts..."
+        # 获取过期的Artifacts并删除
+        for artifact_id in $(echo "${artifacts}" | jq '.artifacts[] | select(.expired==true) | .id'); do
+          echo "删除Artifact ID: ${artifact_id}"
+          curl -X DELETE \
+          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${artifact_id}
+        done
+        echo "Artifacts清理完毕"
