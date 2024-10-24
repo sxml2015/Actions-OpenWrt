@@ -116,6 +116,9 @@ git clone --depth=1 https://github.com/sirpdboy/luci-app-ddns-go.git package/ddn
 #文件浏览器
 #git clone --depth=1 https://github.com/sxml/luci-app-filebrowser.git package/luci-app-filebrowser
 
+#文件助手
+git clone --depth=1 https://github.com/sxml/luci-app-fileassistant.git package/luci-app-fileassistant
+
 #lrzsz
 #rm -rf feeds/packages/utils/lrzsz
 #cp -rf $GITHUB_WORKSPACE/general/lrzsz feeds/packages/utils
