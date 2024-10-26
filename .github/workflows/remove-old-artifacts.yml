@@ -9,6 +9,7 @@ on:
 env: 
   DELETE_ARTIFACTS: true  # 删除旧的工作流程运行和工件
   DELETE_CACHE: true      # 删除缓存
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   remove-old-artifacts:
@@ -31,5 +32,7 @@ jobs:
 
     - name: 删除缓存
       if: env.DELETE_CACHE == 'true'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # 设置GH_TOKEN变量
       run: |
         gh api -X DELETE /repos/${{ github.repository }}/actions/caches
