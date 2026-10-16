@@ -1,0 +1,196 @@
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# Description: Build OpenWrt using GitHub Actions
+#
+# 2026.10.16  Flippy 打包 —— Phicomm N1 (s905d) 专用
+#   只打包 N1：mk_s905d_n1_basic.sh + mk_s905d_n1_plus.sh
+#   固件来自 Build2512-N1（编译工作流 Lede2512_FOL 里 N1 矩阵任务产出）
+#   内核来自 Files 标签（标签名可改 FILES_TAG）
+#   发布标签：Lede2512-N1-日期时间
+#
+name: F打包_Lede2512_N1
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+#  schedule:
+#    - cron: 0 22 * 11 *
+
+env:
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  # 本设备对应的编译产物标签（由 编译Lede2512_FOL 工作流产出）
+  BUILD_TAG: Build2512-N1
+  # 内核文件所在的标签
+  FILES_TAG: Files
+  # 最终发布用的名称前缀
+  FILE_NAME: Lede2512-N1
+  PRODUCT_NAME: Lede2512-N1
+  DEVICE_LABEL: Phicomm N1 (s905d)
+  # 本设备要跑的打包脚本（openwrt_packit）
+  MK_SCRIPTS: mk_s905d_n1_basic.sh mk_s905d_n1_plus.sh
+  Update_Ver_SH: aarch64/autoVersion.sh
+  Get_Imgs_SH: aarch64/getImgs.sh
+  DL_SH: aarch64/scripts/dl_release.sh
+  DELETE_RELEASE: true    # 删除旧版本
+  DELETE_ARTIFACTS: true  # 删除旧的工作流程运行和工件
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    if: github.event.repository.owner.id == github.event.sender.id
+
+    name: Flippy打包 ${{ env.DEVICE_LABEL }}
+    strategy:
+      fail-fast: false
+
+    steps:
+    - name: 准备
+      uses: actions/checkout@v4
+
+    - name: 部署编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        #sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-2004)
+        if ! sudo -E apt-get -qq install $(curl -fsSL https://tinyurl.com/ubuntu2204-make-openwrt); then
+          echo "!! 在线依赖清单获取失败，改用仓库自带的 depends-ubuntu-2204"
+          sudo -E apt-get -qq install $(cat $GITHUB_WORKSPACE/depends-ubuntu-2204)
+        fi
+        sudo -E apt-get -qq install rename
+        sudo -E apt-get -qq install pigz
+        sudo -E apt-get -qq install time
+        sudo -E apt-get -qq install sshpass
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: 克隆源代码
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        cd openwrt
+        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
+        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+        echo "DATE=$(date "+%Y-%m-%d %H:%M")" >> $GITHUB_ENV
+        echo "DATE1=$(date "+%Y%m%d-%H%M")" >> $GITHUB_ENV
+
+    - name: 下载内核文件（Files 标签）
+      env:
+        TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      run: |
+        sudo mkdir -p /opt/kernel
+        sudo chown -R "$USER:$GROUPS" /opt/kernel
+        KERNEL_DIR=/opt/kernel \
+        REPO_FULL="${{ github.repository }}" \
+        FILES_TAG="$FILES_TAG" \
+        bash "$GITHUB_WORKSPACE/$Get_Imgs_SH"
+        echo "---------- /opt/kernel ----------"
+        ls -la /opt/kernel
+
+    - name: 准备打包环境（openwrt_packit）
+      run: |
+        cd /opt
+        sudo cp "$GITHUB_WORKSPACE/scripts/respawn_mks.sh" ./
+        sudo git clone --depth=1 https://github.com/unifreq/openwrt_packit
+        sudo chmod +x ./respawn_mks.sh
+        sudo ./respawn_mks.sh
+        sudo chown -R "$USER:$GROUPS" /opt/openwrt_packit
+
+    - name: 下载本设备固件（${{ env.BUILD_TAG }} 标签）
+      env:
+        TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      run: |
+        bash "$GITHUB_WORKSPACE/$DL_SH" "$BUILD_TAG" /opt/openwrt_packit "${{ github.repository }}"
+        echo "---------- 待打包的 rootfs ----------"
+        ls -la /opt/openwrt_packit/*.tar.gz
+
+    - name: 打包固件
+      id: build
+      run: |
+        echo $PWD
+        cd /opt/openwrt_packit
+        chmod +x "$GITHUB_WORKSPACE/$Update_Ver_SH"
+        bash "$GITHUB_WORKSPACE/$Update_Ver_SH"
+        cp "$GITHUB_WORKSPACE/scripts/whoami" ./
+        for mk in $MK_SCRIPTS; do
+          echo "=============================================================="
+          echo " 执行 $mk"
+          echo "=============================================================="
+          sudo ./"$mk" || { echo "!! $mk 执行失败"; exit 1; }
+        done
+        #sudo cp ./*AllPackages.tar.gz ./output/
+        sudo cp ./files/update-amlogic-openwrt.sh ./output/
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 整理文件
+      id: organize
+      if: steps.build.outputs.status == 'success' && !cancelled()
+      run: |
+        sudo chown -R "$USER:$GROUPS" /opt/openwrt_packit/output || true
+        cd /opt/openwrt_packit/output
+        pigz -6 -p $(nproc) *.img
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        ls -la
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 编译后硬盘容量
+      if: (!cancelled())
+      run: df -hT
+
+    - name: 固件发布信息
+      id: release
+      uses: ncipollo/release-action@v1
+      with:
+        name: ${{ env.FILE_NAME }}-${{ env.DATE }}
+        # 正式固件：明确标为非预发布，确保在 Releases 页面排在编译中间产物前面。
+        prerelease: false
+        allowUpdates: true
+        tag: ${{ env.FILE_NAME }}-${{ env.DATE1 }}
+        commit: master
+        token: ${{ secrets.RELEASES_TOKEN }}
+        body: |
+          默认IP：192.168.1.1 默认密码： password
+          固件：Lede 25.12 · **${{ env.DEVICE_LABEL }}**
+          Flippy 打包，自用无 wifi
+          +o版 +版（Flowoffload加速+SFE加速）
+          根源于编译工作流产出的 `${{ env.BUILD_TAG }}` 标签
+          当前使用版本:【编译前的最后一次[➦主源码](https://github.com/coolsnowwolf/lede)更新记录】
+          ${{ env.useVersionInfo }}
+        artifacts: ${{ env.FIRMWARE }}/*
+
+    - name: 删除旧版本
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.DELETE_RELEASE == 'true'
+      with:
+        keep_latest: 2                               # 要保留的最新版本数 0删除所有版本
+        delete_tag_pattern: '^${{ env.FILE_NAME }}($|-)'     # 指定标签
+        delete_tags: true                            #指定是否删除与旧版本关联的标签
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}  # 令牌
+
+    - name: 删除旧的工作流程运行和工件
+      uses: Mattraks/delete-workflow-runs@main
+      if: env.DELETE_ARTIFACTS == 'true'
+      with:
+        token: ${{ secrets.RELEASES_TOKEN }}    # 令牌
+        repository: ${{ github.repository }}    # 运行工作流的存储库的名称。
+        retain_days: 1                          # 工作流的保留天数进行比较的天数
+        keep_minimum_runs: 0                    # 工作流程保留的最少运行次数
+
+    - name: 电报机器人信息通知
+      # 没配置电报相关 Secrets 时这一步会失败，用 continue-on-error 保证不影响打包结果判定。
+      continue-on-error: true
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      run: curl -k --data chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" --data "text=${{ env.FILE_NAME }}（${{ env.DEVICE_LABEL }}）打包完成" "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"

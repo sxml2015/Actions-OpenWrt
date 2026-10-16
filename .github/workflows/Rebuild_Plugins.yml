@@ -1,0 +1,77 @@
+# ==============================================================================
+#  重建插件清单 —— 从仓库里的字典 + 基线 config 重新生成 plugins.cfg
+#
+#  什么时候用：
+#    · 你改了 aarch64/Lede2512/插件字典.tsv（增删插件/改分组）
+#    · 底座 config 换了新版本，想让清单跟上
+#  平时改插件只要编辑 plugins.cfg 即可，不需要跑这个工作流。
+#
+#  跑完会把新的 aarch64/Lede2512/plugins.cfg 自动提交回仓库（可选）。
+# ==============================================================================
+name: 重建插件清单
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: '重建完成后是否自动提交回仓库'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-22.04
+    name: 重建 plugins.cfg
+
+    steps:
+    - name: 准备
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
+
+    - name: 检查输入文件
+      run: |
+        ls -la aarch64/Lede2512/ | sed 's/^/  /'
+        test -f aarch64/Lede2512/插件字典.tsv || { echo "!! 缺少字典 aarch64/Lede2512/插件字典.tsv"; exit 1; }
+        test -f aarch64/Lede2512/Lede2512_FOL.config || { echo "!! 缺少基线 config aarch64/Lede2512/Lede2512_FOL.config"; exit 1; }
+
+    - name: 重建 plugins.cfg
+      run: |
+        python3 aarch64/scripts/build_plugins_cfg.py
+
+    - name: 变化预览
+      run: |
+        git --no-pager diff --stat || true
+        echo "---------- plugins.cfg 前 40 行 ----------"
+        head -40 aarch64/Lede2512/plugins.cfg
+
+    - name: 上传清单产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: plugins.cfg
+        path: aarch64/Lede2512/plugins.cfg
+        if-no-files-found: error
+
+    - name: 提交回仓库
+      if: ${{ github.event.inputs.commit == 'true' }}
+      run: |
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        if git diff --quiet -- aarch64/Lede2512/plugins.cfg; then
+          echo "清单没有变化，无需提交。"
+          exit 0
+        fi
+        git add aarch64/Lede2512/plugins.cfg
+        git commit -m "chore(plugins): 重建 plugins.cfg（Actions 自动提交）"
+        git push
+        echo "已提交回仓库。"

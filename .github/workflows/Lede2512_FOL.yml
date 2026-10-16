@@ -1,0 +1,331 @@
+#
+# 编译 Lede-2512 固件（Flippy 打包用 rootfs）
+# 2026.10.16 改造：
+#   1) 双设备矩阵：Phicomm N1 (s905d) / X96 Max+ (s905x3)，各自使用不同的
+#      CONFIG_TARGET_OPTIMIZATION，分别发布到 Build2512-N1 / Build2512-X96 标签。
+#   2) 编译前自选插件：由 aarch64/Lede2512/plugins.cfg 控制（on/off），
+#      gen_config.py 负责合成最终 .config、自动补齐缺失条目、按需改写优化参数。
+#   3) 第三方插件：由 aarch64/Lede2512/thirdparty.cfg 控制。
+# 原始版本备份：Lede2512_FOL.yml.bak-*
+#
+name: 编译Lede2512_FOL
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: '要编译哪个设备的固件'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - n1
+          - x96
+# 定时触发开始编译(把下面两个#去掉开启,时间设置请看定时编译说明)
+#  schedule:
+#   - cron: 0 16 */2 * *
+
+env:
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  FEEDS_CONF: aarch64/Lede2512/feeds.conf.default
+  # 基线 config（目标平台 / 系统 / 内核 / 基础包），插件开关不在这里，在 PLUGINS_CFG
+  BASE_CONFIG: aarch64/Lede2512/Lede2512_FOL.config
+  # 插件清单：改这个文件就能增减插件
+  PLUGINS_CFG: aarch64/Lede2512/plugins.cfg
+  # 第三方插件清单 + 开关
+  THIRDPARTY_CFG: aarch64/Lede2512/thirdparty.cfg
+  GEN_CONFIG: aarch64/scripts/gen_config.py
+  DIY_P1_SH: aarch64/Lede2512/2512diy-part1.sh
+  DIY_P2_SH: aarch64/Lede2512/2512diy-part2.sh
+  TZ: Asia/Shanghai
+
+jobs:
+  # ==========================================================================
+  #  准备：按运行界面选择，生成编译矩阵
+  # ==========================================================================
+  prepare:
+    runs-on: ubuntu-22.04
+    name: 准备编译矩阵
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+    - name: 准备
+      uses: actions/checkout@v4
+
+    - name: 生成矩阵（设备参数以 gen_config.py 为准，不在这里重复维护）
+      id: matrix
+      env:
+        DEV: ${{ github.event.inputs.device }}
+      run: |
+        case "$DEV" in
+          n1)  SEL="n1"  ; TXT="仅 Phicomm N1 (s905d)" ;;
+          x96) SEL="x96" ; TXT="仅 X96 Max+ (s905x3)" ;;
+          *)   SEL="all" ; TXT="两个设备都编译" ;;
+        esac
+        M="$(python3 "$GEN_CONFIG" --list-devices --only "$SEL" --build-prefix Build2512 --lede-prefix Lede2512)"
+        if [ -z "$M" ]; then echo "!! 生成编译矩阵失败"; exit 1; fi
+        echo "matrix=$M" >> "$GITHUB_OUTPUT"
+        {
+          echo "### 编译矩阵已生成"
+          echo ""
+          echo "- 选择：$TXT"
+          echo "- 插件清单：\`$PLUGINS_CFG\`"
+          echo "- 第三方清单：\`$THIRDPARTY_CFG\`"
+          echo ""
+          echo '```json'
+          echo "$M"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+        echo "matrix = $M"
+
+  # ==========================================================================
+  #  编译
+  # ==========================================================================
+  build:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    name: 编译Lede2512 · ${{ matrix.label }}
+
+    steps:
+    - name: 准备
+      uses: actions/checkout@v4
+
+    - name: 解析设备参数
+      run: |
+        echo "DEVICE=${{ matrix.device }}" >> $GITHUB_ENV
+        echo "DEVICE_LABEL=${{ matrix.label }}" >> $GITHUB_ENV
+        echo "FILE_NAME=${{ matrix.tag }}" >> $GITHUB_ENV
+        echo "DEVICE_OPT=${{ matrix.opt }}" >> $GITHUB_ENV
+        echo "AML_TAG_KEYWORD=${{ matrix.aml }}" >> $GITHUB_ENV
+        {
+          echo "### 本次编译目标"
+          echo ""
+          echo "| 项 | 值 |"
+          echo "| --- | --- |"
+          echo "| 设备 | ${{ matrix.label }} |"
+          echo "| 发布标签 | ${{ matrix.tag }} |"
+          echo "| 编译参数 | \`CONFIG_TARGET_OPTIMIZATION=${{ matrix.opt }}\` |"
+          echo "| 晶晨宝盒关键字 | ${{ matrix.aml }} |"
+        } >> "$GITHUB_STEP_SUMMARY"
+        echo "设备=${{ matrix.label }}  优化参数=[${{ matrix.opt }}]"
+
+    - name: 部署编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        #docker rmi $(docker images -q) || true
+        docker images -q | xargs -r docker rmi || true
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /etc/mysql /etc/php
+        sudo -E apt-get -y purge azure-cli* docker* ghc* zulu* hhvm* llvm* firefox* google* dotnet* aspnetcore* powershell* openjdk* adoptopenjdk* mysql* php* mongodb* moby* snap* || true
+        sudo -E apt-get -qq update
+        #sudo -E apt -y install $(curl -fsSL https://tinyurl.com/ubuntu2204-make-openwrt) subversion clang llvm
+        #sudo -E apt-get -qq install libfuse-dev $(curl -fsSL https://tinyurl.com/ubuntu2204-make-openwrt)
+        sudo -E apt-get -qq install $(cat $GITHUB_WORKSPACE/depends-ubuntu-2204) cython3 python3-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        #sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        echo "status=success" >> $GITHUB_OUTPUT
+        df -Th
+
+    - name: 创建模拟物理磁盘
+      run: |
+        mnt_size=$(expr $(df -h /mnt | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 1)
+        root_size=$(expr $(df -h / | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 4)
+        sudo truncate -s "${mnt_size}"G /mnt/mnt.img
+        sudo truncate -s "${root_size}"G /root.img
+        sudo losetup /dev/loop6 /mnt/mnt.img
+        sudo losetup /dev/loop7 /root.img
+        sudo pvcreate /dev/loop6
+        sudo pvcreate /dev/loop7
+        sudo vgcreate github /dev/loop6 /dev/loop7
+        sudo lvcreate -n runner -l 100%FREE github
+        sudo mkfs.xfs /dev/github/runner
+        sudo mkdir -p /workdir
+        sudo mount /dev/github/runner /workdir
+        sudo chown -R runner.runner /workdir
+        df -Th
+
+    - name: 检查服务器性能
+      run: |
+        echo "警告⚠"
+        echo "若分配的服务器性能不足，务必及时取消，重新运行！"
+        echo "已知编译成功CPU型号：8370C,8171M"
+        echo "已知性能不足CPU型号：8272CL"
+        echo -e "-------------- ------------CPU信息------------------------------------------\n"
+        echo "CPU物理数量:$(cat /proc/cpuinfo| grep "physical id"| sort| uniq| wc -l)"
+        echo -e "CPU核心及版本信息：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
+        echo "-------------------------------内存信息-------------------------------------------"
+        echo "已安装内存详细信息："
+        sudo lshw -short -C memory | grep GiB
+        echo -e "\n"
+        echo "-----------------------------硬盘信息---------------------------------------------"
+        echo -e  "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l) \n"
+        echo "硬盘详情："
+        df -Th
+
+    - name: 下载源码
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        cd openwrt
+        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
+        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+        echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
+        echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
+
+    # 缓存按设备分开，避免两种编译参数互相污染
+    - name: 缓存加速
+      uses: stupidloud/cachewrtbuild@main
+      with:
+        mixkey: '${{ matrix.tag }}'
+        ccache: true
+        skip: false
+        toolchain: true
+        clean: false
+        prefix: ${{ github.workspace }}/openwrt
+
+    - name: 加载自定义配置
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: 更新软件包
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: 安装软件包
+      run: cd openwrt && ./scripts/feeds install -a
+
+    # ----------------------------------------------------------------------
+    #  生成 .config：基线 config + plugins.cfg + 本设备编译参数
+    # ----------------------------------------------------------------------
+    - name: 生成 .config（插件清单 + 设备参数）
+      run: |
+        [ -e files ] && mv files openwrt/files || true
+        cd openwrt
+        python3 "$GITHUB_WORKSPACE/$GEN_CONFIG" \
+          --base "$GITHUB_WORKSPACE/$BASE_CONFIG" \
+          --plugins "$GITHUB_WORKSPACE/$PLUGINS_CFG" \
+          --device "${{ matrix.device }}" \
+          --out .config \
+          --report "$GITHUB_WORKSPACE/config-report-${{ matrix.device }}.txt"
+        echo "---------- .config 关键项 ----------"
+        grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE|OPTIONS|OPTIMIZATION)' .config || true
+        grep -c '^CONFIG_PACKAGE_.*=y$' .config | sed 's/^/启用的 PACKAGE 数量：/'
+
+    - name: 执行 DIY 脚本 part2（克隆第三方插件）
+      run: |
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: 下载软件包
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        echo ""
+        echo "========== 校验：插件清单 vs make defconfig 之后的最终配置 =========="
+        python3 "$GITHUB_WORKSPACE/$GEN_CONFIG" \
+          --plugins "$GITHUB_WORKSPACE/$PLUGINS_CFG" \
+          --verify .config || true
+        echo "===================================================================="
+        echo ""
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+        rm -rf $GITHUB_WORKSPACE/.git
+        rm -rf $GITHUB_WORKSPACE/opt
+        df -Th
+
+    - name: 编译固件
+      id: compile
+      run: |
+        cd openwrt
+        # 新增：清理旧编译缓存，释放磁盘空间
+        rm -rf build_dir staging_dir tmp
+        make clean
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        echo "DATE_YMD=_$(date +"%Y%m%d")" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 整理固件文件夹
+      id: organize
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt/bin/packages
+        tar -zcvf AllPackages.tar.gz ./*
+        cp AllPackages.tar.gz $GITHUB_WORKSPACE/openwrt/bin/targets/*/*
+        cd $GITHUB_WORKSPACE/openwrt/bin/targets/*/*
+        rm -rf packages sha256sums feeds.buildinfo openwrt-armvirt-64-default.manifest openwrt-armvirt-64-Image openwrt-armvirt-64-rootfs-ext4.img version.buildinfo openwrt-armvirt-64-generic-initramfs-kernel.bin openwrt-armvirt-64-generic-kernel.bin openwrt-armvirt-64-generic.manifest profiles.json
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 再次检查服务器性能
+      run: |
+        echo "警告⚠"
+        echo "若分配的服务器性能不足，务必及时取消，重新运行！"
+        echo "已知编译成功CPU型号：8370C,8171M"
+        echo "已知性能不足CPU型号：8272CL"
+        echo -e "-------------- ------------CPU信息------------------------------------------\n"
+        echo "CPU物理数量:$(cat /proc/cpuinfo| grep "physical id"| sort| uniq| wc -l)"
+        echo -e "CPU核心及版本信息：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
+        echo "-------------------------------内存信息-------------------------------------------"
+        echo "已安装内存详细信息："
+        sudo lshw -short -C memory | grep GiB
+        echo -e "\n"
+        echo "-----------------------------硬盘信息---------------------------------------------"
+        echo -e  "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l) \n"
+        echo "硬盘详情："
+        df -Th
+
+    - name: 上传配置报告
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: config-report-${{ matrix.device }}
+        path: config-report-${{ matrix.device }}.txt
+        if-no-files-found: ignore
+
+    - name: 固件发布信息
+      id: release
+      uses: ncipollo/release-action@v1
+      with:
+        # 中间产物：标记为预发布，这样 Releases 页面会把它折叠到 Pre-releases 区，
+        # 正式固件（Flippy 打包产出的 Lede2512-*-日期时间）排在前面。
+        name: ${{ matrix.tag }}（编译中间产物 rootfs，供 Flippy 打包）
+        prerelease: true
+        allowUpdates: true
+        tag: ${{ matrix.tag }}
+        token: ${{ secrets.RELEASES_TOKEN }}
+        body: |
+          编译 Lede 25.12 固件 rootfs，供 Flippy 打包使用！
+          **设备**：${{ matrix.label }}
+          **编译参数**：CONFIG_TARGET_OPTIMIZATION="${{ matrix.opt }}"
+          **晶晨宝盒 Releases 关键字**：${{ matrix.aml }}
+          当前使用版本:【编译前的最后一次[➦主源码](https://github.com/coolsnowwolf/lede)更新记录】
+          ${{ env.useVersionInfo }}
+        artifacts: ${{ env.FIRMWARE }}/*
+
+    - name: 电报机器人信息通知
+      # 没配置 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 时这一步必然失败，
+      # 用 continue-on-error 保证不影响编译结果的判定（电报通知是可选项）。
+      continue-on-error: true
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      run: curl -k --data chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" --data "text=${{ matrix.tag }}（${{ matrix.label }}）编译完成" "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage"
