@@ -294,69 +294,65 @@ fi
 ./scripts/feeds install -a
 
 #==============================================================================
-# 2026-10-16 修复编译中断：python-cython [host] failed to build
+# 2026-10-17 修复：python 包的 wheel 文件名大小写不确定 → installer 找不到文件
 #------------------------------------------------------------------------------
-# 根因：新版 setuptools(>=75) 生成 wheel 文件名时按 PEP 503 做「小写规范化」，
-#       例如 Cython -> cython-3.0.10-*.whl，PyYAML -> pyyaml-6.0.1-*.whl；
-#       而 OpenWrt 的 python3-package.mk / python3-host-build.mk 用
-#       PYPI_NAME（含大写）拼出期望文件名去 glob：Cython-3.0.10-*.whl。
-#       Linux 文件系统区分大小写 => glob 匹配为空 => installer 报
-#       FileNotFoundError: .../build_dir/hostpkg/pypi/Cython-3.0.10//openwrt-build/Cython-3.0.10-*.whl
-# 方案：对「真含大写字母」的包，覆盖其期望 wheel 名称为小写规范化名。
-#       仅改「期望文件名」，不动下载地址 / 包版本 / 源码目录，最小改动、无额外下载。
-#       上游同等修复：openwrt/packages 7f233be4(python-cython)、python-markupsafe 增加
-#       PYPI_SOURCE_NAME:=<小写名>。
+# 两次不同的失败，同一个根因：
+#   FileNotFoundError: .../pypi/itsdangerous-2.1.2//openwrt-build/-2.1.2-*.whl   （名字整个空了）
+#   FileNotFoundError: .../pypi/PyYAML-6.0.1//openwrt-build/pyyaml-6.0.1-*.whl    （大小写不符）
 #
-# python3-package.mk 里默认值的真实写法（已核对上游）：
-#     PYTHON3_PKG_WHEEL_NAME ?= $(subst -,_,$(if $(PYPI_SOURCE_NAME),$(PYPI_SOURCE_NAME),$(PKG_NAME)))
-#   => 只把 '-' 换成 '_'，【不做小写化】。所以：
-#      · PKG_NAME 本来就是小写   -> 默认值正确，不要动
-#      · PKG_NAME 含大写（Flask）-> 必须覆盖成小写
+# 根因：python3-package.mk / python3-host-build.mk 的 install 配方写死了
+#         "$(PYTHON3_PKG_BUILD_DIR)"/openwrt-build/$(PYTHON3_PKG_WHEEL_NAME)-$(PYTHON3_PKG_WHEEL_VERSION)-*.whl
+#       而 PYTHON3_PKG_WHEEL_NAME 的默认值是
+#         $(subst -,_,$(if $(PYPI_SOURCE_NAME),$(PYPI_SOURCE_NAME),$(PKG_NAME)))
+#       ——只把 '-' 换成 '_'，【不做小写化】。
+#       可实产 wheel 的名字取决于包自己的元数据：
+#         · 带 pyproject.toml [project] 的（Cython 3.x）→ 规范化成小写 cython-3.0.10-*.whl
+#         · 只有 setup.py 的（PyYAML 6.0.1）         → 原样保留大写 PyYAML-6.0.1-*.whl
+#       Linux 区分大小写，所以「一律改小写」和「一律不改」都必然误伤一部分包。
 #
-# 说明：必须在 feeds update/install 之后执行（feeds 更新会覆盖这些 Makefile）。
+#       历史教训：曾按「PYPI 名含大写就改小写」批量覆盖了 21 个包。先挂 itsdangerous，
+#       修掉判断逻辑后又在 python-yaml 挂——两次都是这一处。证明"猜名字"这条路走不通。
+#
+# 方案：不再猜。把两处 install 配方的 glob 从
+#         <名字>-<版本>-*.whl   →   *.whl
+#       `python -m build --wheel` 每次构建在 openwrt-build/ 下只产出一个 whl，
+#       通配必然命中，与大小写、命名规范、包类型都无关。
+#       同时清掉历史注入的 PYTHON3_*_WHEEL_NAME 覆盖行（改完通配后它们是死代码）。
+#
+# 必须在 feeds update/install 之后执行（feeds 更新会覆盖这些 mk 文件）。
 #==============================================================================
-for mk in feeds/packages/lang/python/*/Makefile; do
-  [ -f "$mk" ] || continue
-
-  # 幂等：已经写过就直接跳过
-  if grep -q '^PYTHON3_PKG_WHEEL_NAME:=' "$mk"; then continue; fi
-
-  # 期望名来源：与 python3-package.mk 一致 —— 优先 PYPI_SOURCE_NAME，其次 PYPI_NAME
-  name=$(sed -n 's/^PYPI_SOURCE_NAME:=\(.*\)$/\1/p' "$mk" | head -n1)
-  [ -n "$name" ] || name=$(sed -n 's/^PYPI_NAME:=\(.*\)$/\1/p' "$mk" | head -n1)
-  [ -n "$name" ] || continue
-
-  #【2026-10-17 修正】很多包写的是 PYPI_NAME:=$(PKG_NAME)，sed 取出来的是字面量
-  # "$(PKG_NAME)"。若直接当名字用，会被下面的大写判断误伤、tr 成未定义的
-  # "$(pkg_name)"，拼出的 glob 变成 "-2.1.2-*.whl"，installer 必然报
-  # FileNotFoundError（itsdangerous 就是这样挂的）。
-  # 正确做法：先把 $(PKG_NAME) 解析成真实字面值，再判断是否真的含大写字母。
-  case "$name" in
-    '$(PKG_NAME)')
-      name=$(sed -n 's/^PKG_NAME:=\(.*\)$/\1/p' "$mk" | head -n1)
-      [ -n "$name" ] || continue
-      ;;
-    *'$('*)
-      # 其它形式的变量引用不猜，保持 Makefile 原样（默认值本来就对）
-      continue
-      ;;
-  esac
-
-  # 只处理真含大写字母的；本来就是小写的（itsdangerous / numpy / yarl …）不动
-  case "$name" in
-    *[A-Z]*) : ;;
-    *) continue ;;
-  esac
-
-  lower=$(printf '%s' "$name" | tr 'A-Z' 'a-z' | sed 's/[-_.]\+/_/g')
-  [ "$lower" = "$name" ] && continue
-
-  # 插到 PKG_RELEASE 之后（保证在 include python3-package.mk 之前生效）；
-  # 个别包没有 PKG_RELEASE 时，退化为插到 include 那一行之前。
-  if grep -q '^PKG_RELEASE:=' "$mk"; then
-    sed -i "/^PKG_RELEASE:=/a PYTHON3_PKG_WHEEL_NAME:=$lower\nPYTHON3_HOST_WHEEL_NAME:=$lower" "$mk"
-  else
-    sed -i "0,/^include .*python3-package\.mk/i PYTHON3_PKG_WHEEL_NAME:=$lower\nPYTHON3_HOST_WHEEL_NAME:=$lower" "$mk"
+wheel_glob_fix() {
+  _f="$1"
+  _var="$2"
+  if [ ! -f "$_f" ]; then
+    echo "[wheel-glob-fix] 跳过（文件不存在）: $_f"
+    return 0
   fi
-  echo "[wheel-name-fix] $(basename "$(dirname "$mk")"): $name -> $lower"
+  if grep -q 'openwrt-build/\*\.whl' "$_f"; then
+    echo "[wheel-glob-fix] $(basename "$_f")：已修补过，跳过"
+    return 0
+  fi
+  # 用 [$] [*] [.] 逐字符转义，避开 BRE 元字符歧义
+  sed -i "s|openwrt-build/[$](${_var}_WHEEL_NAME)-[$](${_var}_WHEEL_VERSION)-[*][.]whl|openwrt-build/*.whl|" "$_f"
+  if grep -q 'openwrt-build/\*\.whl' "$_f"; then
+    echo "[wheel-glob-fix] $(basename "$_f")：install glob → openwrt-build/*.whl"
+  else
+    echo "[wheel-glob-fix] !! $(basename "$_f")：未匹配到预期文本"
+    echo "[wheel-glob-fix] !! 上游 mk 结构可能已变，请手工检查 install 配方"
+  fi
+}
+wheel_glob_fix feeds/packages/lang/python/python3-package.mk    PYTHON3_PKG
+wheel_glob_fix feeds/packages/lang/python/python3-host-build.mk PYTHON3_HOST
+
+# 清掉历史注入的覆盖行。只删「PKG 与 HOST 两项都存在且值完全相同」的成对行——
+# 上游自己写的覆盖一般只有一条，或两条值不同，不会命中。
+for _f in feeds/packages/lang/python/*/Makefile; do
+  [ -f "$_f" ] || continue
+  grep -qE '^PYTHON3_(PKG|HOST)_WHEEL_NAME:=' "$_f" || continue
+  _pn=$(sed -n 's/^PYTHON3_PKG_WHEEL_NAME:=\(.*\)$/\1/p' "$_f" | head -n1)
+  _hn=$(sed -n 's/^PYTHON3_HOST_WHEEL_NAME:=\(.*\)$/\1/p' "$_f" | head -n1)
+  if [ -n "$_pn" ] && [ "$_pn" = "$_hn" ]; then
+    sed -i '/^PYTHON3_PKG_WHEEL_NAME:=/d; /^PYTHON3_HOST_WHEEL_NAME:=/d' "$_f"
+    echo "[wheel-glob-fix] 清除历史覆盖: $(basename "$(dirname "$_f")") ($_pn)"
+  fi
 done
