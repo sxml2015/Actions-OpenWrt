@@ -45,7 +45,9 @@ jobs:
     runs-on: ubuntu-22.04
     if: github.event.repository.owner.id == github.event.sender.id
 
-    name: Flippy打包 ${{ env.DEVICE_LABEL }}
+    # 注意：jobs.<id>.name 不支持 env 上下文（GitHub 只在 step 级提供 env），
+    #       所以这里必须写字面量，不能写 ${{ env.DEVICE_LABEL }}，否则工作流整份报 Invalid。
+    name: Flippy打包 Phicomm N1 (s905d)
     strategy:
       fail-fast: false
 

@@ -1,0 +1,45 @@
+# ==============================================================
+#  Actions-OpenWrt 2512 —— 不该进仓库的东西
+#  注意：这里绝对不能出现 *.config 之类的通配，
+#        因为仓库里的 Lede2512_FOL.config 等基线配置是必须上传的。
+# ==============================================================
+
+# ---- Python 运行时缓存（build_plugins_cfg.py / gen_config.py 会产生）----
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# ---- 备份与补丁残留（本地改文件时生成的）----
+*.bak
+*.bak-*
+*.orig
+*.rej
+*.disabled
+
+# ---- 本地临时产物（脚本调试时落在仓库根目录）----
+/_tmp_*
+/tmp_*
+/_test_*
+/_v_*
+/_c_*
+/_f_*
+/_k_*
+/_o_*
+/_*.config
+/tags_tmp.txt
+/sections_tmp.txt
+
+# ---- 构建目录（如果哪天在本地跑编译）----
+/openwrt/
+/tmp/
+/out/
+
+# ---- 编辑器与系统垃圾 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
