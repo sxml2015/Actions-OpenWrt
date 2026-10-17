@@ -113,6 +113,42 @@ on  repo https://github.com/xxx/luci-app-yyy.git master package/yyy luci-app-yyy
   有映射时克隆目录会在复制完成后自动删除。
 - 需要编译工具 / 打补丁 / 改文件的特殊插件，写进同目录的 `thirdparty.sh`。
 
+### 4.1 换一份别人的 config —— 平台会自动锁定
+
+拿别人的 `.config` 来改自己的插件，**不需要手工改平台相关的行**：
+
+1. 备份现有 `aarch64/Lede2512/Lede2512_FOL.config`（改名成 `.bak-日期` 或移到 `_旧版本备份/`）；
+2. 把别人的 config 复制进来，**文件名必须是 `Lede2512_FOL.config`**；
+3. 双击 `aarch64/scripts/一键重建插件清单.bat` 重新生成 `plugins.cfg`；
+4. 在 `plugins.cfg` 里把不想要的功能改成 `off`。
+
+第 3 步是关键：`plugins.cfg` 的 on/off 是**按基线 config 的真实状态**生成的，
+所以换 config 后必须重建，否则清单还是旧的。**重建会覆盖你在 `plugins.cfg` 里的手动修改**，
+所以顺序一定是「先换 config → 再重建 → 最后精调」。
+
+**平台不需要你管。** `gen_config.py` 在合成 `.config` 时会强制把平台身份写成固定值：
+
+```
+CONFIG_TARGET_armsr=y
+CONFIG_TARGET_armsr_armv8=y
+CONFIG_TARGET_BOARD="armsr"
+CONFIG_TARGET_SUBTARGET="armv8"
+CONFIG_TARGET_ARCH_PACKAGES="aarch64_generic"
+```
+
+即使别人的 config 原本是 `x86`、树莓派或别的板子，也会被自动改写，编译日志里会打印一条醒目提示：
+
+```
+!! 注意：基线 config 的目标平台检测到 x86，不是本项目固定的 armsr/armv8。
+!! 已自动改写为 armsr/armv8（aarch64_generic），你不需要再手工改 config。
+```
+
+只锁「平台身份」；`CONFIG_TARGET_ROOTFS_PARTSIZE`（根分区大小）、内核选项等用户偏好
+仍然保持基线 config 的原值。
+
+⚠️ 平台能自动纠正，但**包选择不能**。别人 config 里如果开了你没有源码的第三方插件，
+`make defconfig` 会把它们丢掉并打 warning（不影响编译）；想彻底干净就在 `plugins.cfg` 里 `off`。
+
 ---
 
 ## 五、N1 / X96 分开编译

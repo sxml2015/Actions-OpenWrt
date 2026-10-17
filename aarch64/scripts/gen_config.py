@@ -12,6 +12,9 @@ gen_config.py —— Lede2512 固件配置生成器
   3. skip → 完全不碰，保持基线原值
   4. 依赖保护：被依赖项交给 `make defconfig` 处理（OpenWrt 的 select 依赖会自动把它重新打开），
      本脚本在 --verify 阶段把「被自动保留」的项打印出来，便于确认没有被误禁。
+  5. 平台锁定：`CONFIG_TARGET_*` 平台身份行（armsr / armv8 / aarch64_generic）由脚本强制写入。
+     换一份别人的基线 config 时，即使他原来是 x86 或别的板子，也不需要手工改 ——
+     输出一定是本项目固定的平台。用 --no-lock-target 可关闭（一般不要关）。
 
 用法：
   生成：
@@ -51,6 +54,101 @@ DEVICES = {
 
 OPT_KEY = "CONFIG_TARGET_OPTIMIZATION"
 OPT_ENABLE_KEY = "CONFIG_TARGET_OPTIONS"
+
+# ------------------------------------------------------------------------------
+# 平台锁定（2026-10-17）
+#   N1 / X96 都是 Amlogic 盒子，走 Lede 的通用 ARM 平台 armsr / armv8 / aarch64_generic。
+#   目的：换一份别人的基线 config 时，不管他原来是 x86、树莓派还是别的板子，
+#         平台身份一律被强制改写成本项目固定的这套，**不需要再手工改 config**。
+#
+#   只锁「平台身份」这几行；CONFIG_TARGET_ROOTFS_* / PARTSIZE / 内核选项等用户偏好
+#   仍然按基线 config 原样保留。
+# ------------------------------------------------------------------------------
+TARGET_BOARD = "armsr"
+TARGET_SUBTARGET = "armv8"
+TARGET_ARCH_PACKAGES = "aarch64_generic"
+
+# 顶层板子启用行，例如 CONFIG_TARGET_x86=y / CONFIG_TARGET_bcm27xx=y
+# 只匹配「全小写字母数字」的板名，避免误伤 CONFIG_TARGET_OPTIONS=y 这类大写选项。
+RE_BOARD_ON = re.compile(r"^CONFIG_TARGET_([a-z][a-z0-9]*)=y$")
+
+
+def target_lock_lines(board=TARGET_BOARD, subtarget=TARGET_SUBTARGET,
+                      arch=TARGET_ARCH_PACKAGES):
+    """平台身份的规范写法（顺序有意义，照 Lede 生成的顺序排）。"""
+    return [
+        "CONFIG_TARGET_%s=y" % board,
+        "# CONFIG_TARGET_%s_armv7 is not set" % board,
+        "CONFIG_TARGET_%s_%s=y" % (board, subtarget),
+        "# CONFIG_TARGET_MULTI_PROFILE is not set",
+        "CONFIG_TARGET_%s_%s_DEVICE_generic=y" % (board, subtarget),
+        'CONFIG_TARGET_BOARD="%s"' % board,
+        'CONFIG_TARGET_SUBTARGET="%s"' % subtarget,
+        'CONFIG_TARGET_ARCH_PACKAGES="%s"' % arch,
+        'CONFIG_TARGET_ROOTFS_DIR=""',
+    ]
+
+
+def key_of(line):
+    """取出一行里的 CONFIG 名；不是配置行则返回 None。"""
+    s = line.strip()
+    m = RE_ON.match(s) or RE_OFF.match(s) or RE_ANY.match(s)
+    return m.group(1) if m else None
+
+
+def lock_target(lines, board=TARGET_BOARD, subtarget=TARGET_SUBTARGET,
+                arch=TARGET_ARCH_PACKAGES):
+    """强制把平台身份行改写成项目固定值，并清除其它板子的启用行。
+
+    返回 (new_lines, foreign_boards)
+      foreign_boards：基线里检测到的「别的板子」名字，供调用方打印警告。
+    """
+    lock = {}
+    for ln in target_lock_lines(board, subtarget, arch):
+        k = key_of(ln)
+        if k and k not in lock:
+            lock[k] = ln
+
+    # 1) 基线里其它板子的启用行，例如换成 x86 的 config 会有 CONFIG_TARGET_x86=y
+    foreign = sorted({
+        m.group(1)
+        for m in (RE_BOARD_ON.match(ln.strip()) for ln in lines)
+        if m and m.group(1) != board
+    })
+
+    # 1.5) 已经合规（锁定行都在、且没有外来板子）→ 原样返回。
+    #      这样现有基线生成出来的 config 逐字节不变，只在外来 config 上才动手。
+    have = {ln.strip() for ln in lines}
+    if not foreign and all(ln in have for ln in lock.values()):
+        return lines, []
+
+    # 2) 过滤：删掉平台锁定 key 的所有旧行 + 其它板子的行（含其子目标 / 设备行）
+    kept = []
+    insert_at = None
+    for line in lines:
+        k = key_of(line)
+        drop = False
+        if k in lock:
+            drop = True
+        elif k and any(k == "CONFIG_TARGET_" + b or k.startswith("CONFIG_TARGET_" + b + "_")
+                       for b in foreign):
+            drop = True
+        if drop:
+            if insert_at is None:
+                insert_at = len(kept)
+            continue
+        kept.append(line)
+
+    # 3) 插回锁定块：优先放回原来目标区的位置；找不到就放到文件头部注释之后
+    if insert_at is None:
+        insert_at = 0
+        while insert_at < len(kept) and (not kept[insert_at].strip()
+                                        or kept[insert_at].lstrip().startswith("#")):
+            insert_at += 1
+
+    block = [lock[k] for k in lock]
+    out = kept[:insert_at] + block + [""] + kept[insert_at:]
+    return out, foreign
 
 
 def log(msg=""):
@@ -108,6 +206,9 @@ def main():
     ap.add_argument("--build-prefix", default="Build2512", help="编译产物标签前缀")
     ap.add_argument("--lede-prefix", default="Lede2512", help="最终固件标签前缀")
     ap.add_argument("--dump", action="store_true", help="只打印将要做的改动，不写文件")
+    ap.add_argument("--no-lock-target", action="store_true",
+                    help="不锁定平台（默认会把 CONFIG_TARGET_* 强制改写成 %s/%s/%s）"
+                         % (TARGET_BOARD, TARGET_SUBTARGET, TARGET_ARCH_PACKAGES))
     args = ap.parse_args()
 
     # 统一输出为 LF：脚本会输出 JSON/编译参数供工作流解析，
@@ -216,6 +317,11 @@ def main():
 
     base = read_lines(args.base)
 
+    # ---- 平台锁定：不管基线 config 原来是哪个目标平台，一律改写成本项目固定值 ----
+    foreign_boards = []
+    if not args.no_lock_target:
+        base, foreign_boards = lock_target(base)
+
     # 索引：key -> 行号（同一 key 可能出现多次，全部记录）
     index = {}
     for i, line in enumerate(base):
@@ -293,12 +399,31 @@ def main():
         with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
 
+    if foreign_boards:
+        log("")
+        log("!" * 78)
+        log("!! 注意：基线 config 的目标平台检测到 %s，不是本项目固定的 %s/%s。"
+            % (", ".join(foreign_boards), TARGET_BOARD, TARGET_SUBTARGET))
+        log("!! 已自动改写为 %s/%s（%s），你不需要再手工改 config。"
+            % (TARGET_BOARD, TARGET_SUBTARGET, TARGET_ARCH_PACKAGES))
+        log("!! 但这份 config 里的包选择 / 内核选项原本可能是为那个平台准备的，")
+        log("!! 建议抽查 plugins.cfg，把不需要的用 off 关掉。")
+        log("!" * 78)
+
     report = []
     report.append("=" * 78)
     report.append("gen_config 生成报告")
     report.append("=" * 78)
     report.append("  设备          : %s  (%s)" % (prof["label"], dev))
     report.append("  编译参数      : CONFIG_TARGET_OPTIMIZATION=\"%s\"" % optimization)
+    plat = "%s/%s (%s)" % (TARGET_BOARD, TARGET_SUBTARGET, TARGET_ARCH_PACKAGES)
+    if args.no_lock_target:
+        plat += "   [未锁定，按基线原样]"
+    elif foreign_boards:
+        plat += "   [已强制改写；基线原平台: %s]" % ", ".join(foreign_boards)
+    else:
+        plat += "   [已确认一致]"
+    report.append("  目标平台      : %s" % plat)
     report.append("  基线 config   : %s" % args.base)
     report.append("  插件清单      : %s" % args.plugins)
     report.append("  输出 config   : %s" % args.out)
