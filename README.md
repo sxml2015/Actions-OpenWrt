@@ -122,8 +122,8 @@ on  repo https://github.com/xxx/luci-app-yyy.git master package/yyy luci-app-yyy
 3. 双击 `aarch64/scripts/一键重建插件清单.bat` 重新生成 `plugins.cfg`；
 4. 在 `plugins.cfg` 里把不想要的功能改成 `off`。
 
-第 3 步是关键：`plugins.cfg` 的 on/off 是**按基线 config 的真实状态**生成的，
-所以换 config 后必须重建，否则清单还是旧的。**重建会覆盖你在 `plugins.cfg` 里的手动修改**，
+第 3 步是关键：`plugins.cfg` 的 on/off 是**按基线 config 的真实状态**生成的，  
+所以换 config 后必须重建，否则清单还是旧的。**重建会覆盖你在 `plugins.cfg` 里的手动修改**，  
 所以顺序一定是「先换 config → 再重建 → 最后精调」。
 
 **平台不需要你管。** `gen_config.py` 在合成 `.config` 时会强制把平台身份写成固定值：
@@ -143,10 +143,10 @@ CONFIG_TARGET_ARCH_PACKAGES="aarch64_generic"
 !! 已自动改写为 armsr/armv8（aarch64_generic），你不需要再手工改 config。
 ```
 
-只锁「平台身份」；`CONFIG_TARGET_ROOTFS_PARTSIZE`（根分区大小）、内核选项等用户偏好
+只锁「平台身份」；`CONFIG_TARGET_ROOTFS_PARTSIZE`（根分区大小）、内核选项等用户偏好  
 仍然保持基线 config 的原值。
 
-⚠️ 平台能自动纠正，但**包选择不能**。别人 config 里如果开了你没有源码的第三方插件，
+⚠️ 平台能自动纠正，但**包选择不能**。别人 config 里如果开了你没有源码的第三方插件，  
 `make defconfig` 会把它们丢掉并打 warning（不影响编译）；想彻底干净就在 `plugins.cfg` 里 `off`。
 
 ---
@@ -258,6 +258,7 @@ scripts/
 | `scripts/respawn_mks.sh`、`scripts/whoami`     | Flippy 打包用                               |
 | `depends-ubuntu-2204`                         | 编译环境 apt 依赖清单                            |
 
+
 ### ② 建议留着 —— 不传不影响编译
 
 | 路径                                           | 说明                           |
@@ -303,9 +304,26 @@ scripts/
      git remote add origin https://github.com/<你的账号>/Actions-OpenWrt.git
      git push -u origin main
      ```
-4. 推送后到 **Settings → Actions → General**：
-   - `Actions permissions` 选 **Allow all actions and reusable workflows**；
-   - `Workflow permissions` 选 **Read and write permissions**（「重建插件清单」要提交回仓库，必须开这个）。
+4. 推送后到 **Settings → Actions → General**，这一页有两三个分组，按下表设即可：
+
+   | 选项 | 怎么设 | 说明 |
+   | --- | --- | --- |
+   | **Actions permissions** | 选 `Allow all actions and reusable workflows` | 公开仓库默认就是这个，一般不用动 |
+   | **Workflow permissions** | 选 `Read and write permissions` | 建议开，但**不勾也能跑**。见下面的说明 |
+   | `Require actions to be pinned to a full-length commit SHA` | **不要勾** | 见下面的说明 |
+   | `Allow GitHub Actions to create and approve pull requests` | **不要勾** | 本项目不需要 |
+
+   **为什么 `Workflow permissions` 不是必须的**：「重建插件清单」这个工作流自己就写了
+   `permissions: contents: write`，而工作流里显式声明的权限会**覆盖**这里的仓库默认值；
+   而且它的 checkout 用的是 `secrets.RELEASES_TOKEN || secrets.GITHUB_TOKEN`，
+   配了 PAT 就走 PAT，跟这个开关无关。开着只是为了以后新增工作流时省事。
+
+   **为什么不要勾「Require actions to be pinned to a full-length commit SHA」**：
+   勾上之后，所有按版本号/分支引用的 action **会直接无法运行**，必须全部改成 40 位 commit SHA。
+   本项目 8 个 action、21 处引用全是 `@v4` / `@v1` / `@main` / `@master` 形式，勾了等于把整条流水线停掉。
+
+   **为什么不要勾「Allow GitHub Actions to create and approve pull requests」**：
+   本项目所有工作流都是直接 `git push` 到 main（或发 Release），不创建 PR，勾上只会白白扩大权限面。
 
 ## 8.3 需要令牌吗？需要哪些？
 
@@ -329,16 +347,16 @@ scripts/
    - `repo`（完整仓库权限，父项一勾，下面 5 个子项会自动跟着勾）— **必勾**；
    - `workflow`（独立一项，**不包含在 `repo` 里**，要单独勾）— 建议也勾上。
 
-
-> **为什么不是只勾 `public_repo`？**
-> `public_repo` 只管公开仓库，功能上对本项目大多数操作够用，但有一处不稳：
-> 工作流里的「删除旧的工作流程运行」（`Mattraks/delete-workflow-runs`）和「删除旧版本」
-> 属于仓库管理类接口，官方只承诺 `repo` 作用域；一旦哪天仓库改成 Private（或你建个私有测试库），
-> `public_repo` 会立刻全部失效，得重做令牌、重配 Secret。
-> 这是你自己账号的专用令牌，不是授权给第三方应用，勾完整 `repo` 的风险面可控，省事得多。
+> **为什么不是只勾 `public_repo`？**  
+> `public_repo` 只管公开仓库，功能上对本项目大多数操作够用，但有一处不稳：  
+> 工作流里的「删除旧的工作流程运行」（`Mattraks/delete-workflow-runs`）和「删除旧版本」  
+> 属于仓库管理类接口，官方只承诺 `repo` 作用域；一旦哪天仓库改成 Private（或你建个私有测试库），  
+> `public_repo` 会立刻全部失效，得重做令牌、重配 Secret。  
+> 这是你自己账号的专用令牌，不是授权给第三方应用，勾完整 `repo` 的风险面可控，省事得多。  
 > **不需要勾**：`admin:org`、`delete_repo`、`gist`、`user`、`write:packages` 等。
-4. Generate → **立刻复制** 生成的 `ghp_...` 字符串（页面刷新后就看不到了）。
-5. 回到仓库 → Settings → Secrets and variables → Actions → **New repository secret**：
+
+1. Generate → **立刻复制** 生成的 `ghp_...` 字符串（页面刷新后就看不到了）。
+2. 回到仓库 → Settings → Secrets and variables → Actions → **New repository secret**：
    - Name 填 `RELEASES_TOKEN`（大小写要和工作流里写的完全一致）；
    - Secret 粘贴刚才那串值 → Add secret。
 
@@ -346,33 +364,37 @@ scripts/
 
 ## 8.4 第一次跑的顺序
 
-1. **建 `Files` 标签的 Release**：Releases → Draft a new release → Tag 填 `Files` →
-   把 F 大（unifreq）的内核文件包（`boot-*.tar.gz`、`*_kernel.tar.gz` 等）上传 → Publish。
+1. **建 `Files` 标签的 Release**：Releases → Draft a new release → Tag 填 `Files` →  
+   把 F 大（unifreq）的内核文件包（`boot-*.tar.gz`、`*_kernel.tar.gz` 等）上传 → Publish。  
    （打包固件时内核就是从这里取的。）
-2. **Actions →「编译Lede2512_FOL」→ Run workflow**：先选 `n1` 试一次，成功后再选 `all`。
+2. **Actions →「编译Lede2512_FOL」→ Run workflow**：先选 `n1` 试一次，成功后再选 `all`。  
    跑完在 Releases 里会看到 `Build2512-N1` / `Build2512-X96`。
 3. **Actions →「F打包_Lede2512_N1」→ Run workflow**；再跑 **「F打包_Lede2512_X96」**。
 4. 成品在 Releases 里，名字是 `Lede2512-N1-2026xxxx-xxxx` / `Lede2512-X96-2026xxxx-xxxx`。
 5. 以后只改插件：编辑 `aarch64/Lede2512/plugins.cfg` → Commit → 重跑第 2 步。
 
-> 首次编译建议只选一个设备，跑通再选 `all`。
+> 首次编译建议只选一个设备，跑通再选 `all`。  
 > `make defconfig` 阶段日志里会打印「已被依赖强制保留」的清单，可以据此确认没有被误禁。
 
 ---
 
-                                                                                小白折腾备忘
+```
+                                                                            小白折腾备忘
 
-                               SSH 连接操作 （SSH 在线配置 提取.config用  编译固件 小心封号！！！）
+                           SSH 连接操作 （SSH 在线配置 提取.config用  编译固件 小心封号！！！）
 
-    Actions→ 选择「提取Lede2512-config」→ 然后单击Run workflow右侧的按钮。设置SSH connection to Actions 输入 true  点 Run workflow 运行
+Actions→ 选择「提取Lede2512-config」→ 然后单击Run workflow右侧的按钮。设置SSH connection to Actions 输入 true  点 Run workflow 运行
 
-    页面运行到SSH connection to Actions 复制 ssh 会话：ssh FWKDeL121LMd3zeKgKpJ@sfo2.tmate.io
+页面运行到SSH connection to Actions 复制 ssh 会话：ssh FWKDeL121LMd3zeKgKpJ@sfo2.tmate.io
+```
 
 1 键盘 按 q 或 ctrl-c 继续
 
-                               输入 yes  （重新连接有这一步）
+```
+                           输入 yes  （重新连接有这一步）
 
-                              如果执行 touch /tmp/keepalive 命令去解除15分钟限制
+                          如果执行 touch /tmp/keepalive 命令去解除15分钟限制
+```
 
 2  cd openwrt && make menuconfig
 
@@ -382,7 +404,7 @@ scripts/
 
 4  完成后，按快捷键Ctrl+D或执行exit命令以退出，随后的编译工作将自动进行
 
------------------------------------------------------------------------------------------------
+---
 
 【1】Releases 新建标签 Files（手动上传 F大 打包的内核文件）
 
@@ -390,21 +412,22 @@ scripts/
 
 【3】成品在 Releases：Lede2512-N1-日期时间 / Lede2512-X96-日期时间
 
----------------------------------------------------------------------------------------
+---
 
 小白搬运
 
-1: https://github.com/HoldOnBro/Actions-OpenWrt
+1: <https://github.com/HoldOnBro/Actions-OpenWrt>
 
-2: https://github.com/281677160/build-actions
+2: <https://github.com/281677160/build-actions>
 
-3：https://github.com/ophub
+3：<https://github.com/ophub>
 
-云编译说明 https://github.com/danshui-git/shuoming
+云编译说明 <https://github.com/danshui-git/shuoming>
 
-F大  https://github.com/unifreq/openwrt_packit
+F大  <https://github.com/unifreq/openwrt_packit>
 
----------------------------------------------------------------------------------------
+---
+
 ## Acknowledgments
 
 - [P3TERX/Actions-OpenWrt](https://github.com/P3TERX/Actions-OpenWrt)
