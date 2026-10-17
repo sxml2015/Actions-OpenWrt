@@ -115,24 +115,39 @@ fi
 # git clone --depth=1 -b v5 https://github.com/sbwml/openwrt_helloworld.git
 # cp -rf openwrt_helloworld/shadowsocksr-libev package/shadowsocksr-libev
 
+#------------------------------------------------------------------------------
+# 从上游仓库复制子目录到 package/
+# 上游删掉或改名某个目录时（例如 openwrt-passwall-packages 已移除 trojan-plus），
+# 原来的 cp -rf 会刷一行
+#   cp: cannot stat 'openwrt-passwall-packages/trojan-plus': No such file or directory
+# 虽不致命，但会混在日志里干扰排查。改为先判断存在性，缺了只提示、不报错。
+#------------------------------------------------------------------------------
+tp_cp() {
+  if [ -d "$1" ]; then
+    cp -rf "$1" "$2"
+  else
+    echo "[part2] 跳过 $(basename "$1")：上游仓库里已没有这个目录"
+  fi
+}
+
 if tp_block passwall-packages; then
   echo "[part2] 克隆 openwrt-passwall-packages"
   # 克隆openwrt-passwall仓库
   git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git
-  #cp -rf openwrt-passwall-packages/brook package/brook
-  #cp -rf openwrt-passwall-packages/ssocks package/ssocks
-  cp -rf openwrt-passwall-packages/simple-obfs package/simple-obfs
-  #cp -rf openwrt-passwall-packages/pdnsd-alt package/pdnsd-alt
-  cp -rf openwrt-passwall-packages/chinadns-ng package/chinadns-ng
-  cp -rf openwrt-passwall-packages/tcping package/tcping
-  #cp -rf openwrt-passwall-packages/trojan-go package/trojan-go
-  cp -rf openwrt-passwall-packages/trojan-plus package/trojan-plus
-  cp -rf openwrt-passwall-packages/hysteria package/hysteria
-  #cp -rf openwrt-passwall-packages/dns2tcp package/dns2tcp
-  cp -rf openwrt-passwall-packages/sing-box package/sing-box
-  cp -rf openwrt-passwall-packages/v2ray-geodata package/v2ray-geodata
-  cp -rf openwrt-passwall-packages/xray-plugin package/xray-plugin
-  cp -rf openwrt-passwall-packages/shadowsocksr-libev package/shadowsocksr-libev
+  #tp_cp openwrt-passwall-packages/brook package/brook
+  #tp_cp openwrt-passwall-packages/ssocks package/ssocks
+  tp_cp openwrt-passwall-packages/simple-obfs package/simple-obfs
+  #tp_cp openwrt-passwall-packages/pdnsd-alt package/pdnsd-alt
+  tp_cp openwrt-passwall-packages/chinadns-ng package/chinadns-ng
+  tp_cp openwrt-passwall-packages/tcping package/tcping
+  #tp_cp openwrt-passwall-packages/trojan-go package/trojan-go
+  tp_cp openwrt-passwall-packages/trojan-plus package/trojan-plus
+  tp_cp openwrt-passwall-packages/hysteria package/hysteria
+  #tp_cp openwrt-passwall-packages/dns2tcp package/dns2tcp
+  tp_cp openwrt-passwall-packages/sing-box package/sing-box
+  tp_cp openwrt-passwall-packages/v2ray-geodata package/v2ray-geodata
+  tp_cp openwrt-passwall-packages/xray-plugin package/xray-plugin
+  tp_cp openwrt-passwall-packages/shadowsocksr-libev package/shadowsocksr-libev
   rm -rf openwrt-passwall-packages
 else
   echo "[part2] passwall-packages 已关闭，跳过"
@@ -287,26 +302,61 @@ fi
 #       PYPI_NAME（含大写）拼出期望文件名去 glob：Cython-3.0.10-*.whl。
 #       Linux 文件系统区分大小写 => glob 匹配为空 => installer 报
 #       FileNotFoundError: .../build_dir/hostpkg/pypi/Cython-3.0.10//openwrt-build/Cython-3.0.10-*.whl
-# 方案：对 PYPI_NAME 含大写字母的包，覆盖其期望 wheel 名称为小写规范化名。
+# 方案：对「真含大写字母」的包，覆盖其期望 wheel 名称为小写规范化名。
 #       仅改「期望文件名」，不动下载地址 / 包版本 / 源码目录，最小改动、无额外下载。
 #       上游同等修复：openwrt/packages 7f233be4(python-cython)、python-markupsafe 增加
 #       PYPI_SOURCE_NAME:=<小写名>。
+#
+# python3-package.mk 里默认值的真实写法（已核对上游）：
+#     PYTHON3_PKG_WHEEL_NAME ?= $(subst -,_,$(if $(PYPI_SOURCE_NAME),$(PYPI_SOURCE_NAME),$(PKG_NAME)))
+#   => 只把 '-' 换成 '_'，【不做小写化】。所以：
+#      · PKG_NAME 本来就是小写   -> 默认值正确，不要动
+#      · PKG_NAME 含大写（Flask）-> 必须覆盖成小写
+#
 # 说明：必须在 feeds update/install 之后执行（feeds 更新会覆盖这些 Makefile）。
 #==============================================================================
 for mk in feeds/packages/lang/python/*/Makefile; do
   [ -f "$mk" ] || continue
-  # 期望名来源：优先 PYPI_SOURCE_NAME，其次 PYPI_NAME（与 python3-package.mk 一致）
+
+  # 幂等：已经写过就直接跳过
+  if grep -q '^PYTHON3_PKG_WHEEL_NAME:=' "$mk"; then continue; fi
+
+  # 期望名来源：与 python3-package.mk 一致 —— 优先 PYPI_SOURCE_NAME，其次 PYPI_NAME
   name=$(sed -n 's/^PYPI_SOURCE_NAME:=\(.*\)$/\1/p' "$mk" | head -n1)
   [ -n "$name" ] || name=$(sed -n 's/^PYPI_NAME:=\(.*\)$/\1/p' "$mk" | head -n1)
   [ -n "$name" ] || continue
-  # 只处理含大写字母的（小写包名本来就是对的）
+
+  #【2026-10-17 修正】很多包写的是 PYPI_NAME:=$(PKG_NAME)，sed 取出来的是字面量
+  # "$(PKG_NAME)"。若直接当名字用，会被下面的大写判断误伤、tr 成未定义的
+  # "$(pkg_name)"，拼出的 glob 变成 "-2.1.2-*.whl"，installer 必然报
+  # FileNotFoundError（itsdangerous 就是这样挂的）。
+  # 正确做法：先把 $(PKG_NAME) 解析成真实字面值，再判断是否真的含大写字母。
+  case "$name" in
+    '$(PKG_NAME)')
+      name=$(sed -n 's/^PKG_NAME:=\(.*\)$/\1/p' "$mk" | head -n1)
+      [ -n "$name" ] || continue
+      ;;
+    *'$('*)
+      # 其它形式的变量引用不猜，保持 Makefile 原样（默认值本来就对）
+      continue
+      ;;
+  esac
+
+  # 只处理真含大写字母的；本来就是小写的（itsdangerous / numpy / yarl …）不动
   case "$name" in
     *[A-Z]*) : ;;
     *) continue ;;
   esac
-  # 幂等：已修复过则跳过
-  if grep -q '^PYTHON3_HOST_WHEEL_NAME:=' "$mk"; then continue; fi
+
   lower=$(printf '%s' "$name" | tr 'A-Z' 'a-z' | sed 's/[-_.]\+/_/g')
-  sed -i "/^PKG_RELEASE:=/a PYTHON3_PKG_WHEEL_NAME:=$lower\nPYTHON3_HOST_WHEEL_NAME:=$lower" "$mk"
+  [ "$lower" = "$name" ] && continue
+
+  # 插到 PKG_RELEASE 之后（保证在 include python3-package.mk 之前生效）；
+  # 个别包没有 PKG_RELEASE 时，退化为插到 include 那一行之前。
+  if grep -q '^PKG_RELEASE:=' "$mk"; then
+    sed -i "/^PKG_RELEASE:=/a PYTHON3_PKG_WHEEL_NAME:=$lower\nPYTHON3_HOST_WHEEL_NAME:=$lower" "$mk"
+  else
+    sed -i "0,/^include .*python3-package\.mk/i PYTHON3_PKG_WHEEL_NAME:=$lower\nPYTHON3_HOST_WHEEL_NAME:=$lower" "$mk"
+  fi
   echo "[wheel-name-fix] $(basename "$(dirname "$mk")"): $name -> $lower"
 done
