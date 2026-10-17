@@ -5,13 +5,21 @@
 
 全程只改仓库里的文本文件 + 在 Actions 页面点几下，**不需要本地编译环境，也不需要 SSH / make menuconfig**。
 
+> **2026-10-17 变更**：
+> · 修正 `F打包_*` 的 `Invalid workflow file` 报错（`jobs.<id>.name` 不支持 `env` 上下文，已改为字面量）；
+> · 修正 Python 包 wheel 名补丁的误伤（`itsdangerous` 等包编译失败）；
+> · `gen_config.py` 新增**平台自动锁定**，换别人的 config 不再需要手改平台行（见 4.1）；
+> · 补齐网页上传漏掉的 7 个文件，并把碎片提交整理成 4 个有意义的提交。
+>
 > 2026-10-16 变更：旧版本号 `1806` 全部改名为 `2512`（目录、文件名、工作流名、标签名、脚本内容都已同步），  
 > 并移除了老版 Docker 界面 `luci-app-docker`（继续使用 `luci-app-dockerman`）。  
 > 改名前的老文件备份在仓库外的 `_旧版本备份/` 里。
 
 ---
 
-## 一、四个工作流的分工
+## 一、六个工作流的分工
+
+**主力四个**（编译 + 两个打包 + 重建清单）：
 
 | 工作流（Actions 里的名字）  | 作用                                           | 产出标签                                 |
 | ------------------ | -------------------------------------------- | ------------------------------------ |
@@ -19,6 +27,13 @@
 | `F打包_Lede2512_N1`  | 用 openwrt_packit 把 N1 的 rootfs 打成 `.img.gz`  | `Lede2512-N1-日期时间`                   |
 | `F打包_Lede2512_X96` | 用 openwrt_packit 把 X96 的 rootfs 打成 `.img.gz` | `Lede2512-X96-日期时间`                  |
 | `重建插件清单`           | 按字典重新生成 `plugins.cfg`（改插件清单时才用）              | —                                    |
+
+**辅助两个**（平时不用管）：
+
+| 工作流 | 作用 |
+| --- | --- |
+| `删除旧工件和缓存` | 删掉旧的 workflow run 和编译缓存，省存储配额，可手动跑 |
+| `提取Lede2512-config` | 备用：在线 SSH 进 Actions 提取 `.config`，**有封号风险，用不上别动**（见文末备忘） |
 
 **运行顺序**：先跑 `编译Lede2512_FOL`（界面里选 `all` / `n1` / `x96`），成功后分别跑两个 `F打包_*`。
 
@@ -38,8 +53,9 @@ off   CONFIG_PACKAGE_luci-app-ramfree        # 不编译（自动写 "# CONFIG_x
 skip  CONFIG_PACKAGE_luci-app-cpe            # 脚本不干预，保持基线 config 原值
 ```
 
-- 清单按 **90 个分组 / 527 项**排列（第一组「目前在用（必需）」→ LuCI 应用插件 / 主题 /  
-  Wifi 基础包 / 下载工具 …），每行末尾 `#` 后面是说明，随便改，不影响解析。
+- 清单按 **91 个分组 / 539 项**排列（第一组「目前在用（必需）」→ Docker（dockerman）→  
+  LuCI 应用插件 / 主题 / 协议 → Wifi 基础包 / 下载工具 …），每行末尾 `#` 后面是说明，随便改，不影响解析。
+  当前状态是 **on 82 项 / off 457 项**。
 - **加插件**：在文件最末尾「自定义追加区」加一行；包名直接写（会自动补 `CONFIG_PACKAGE_` 前缀），  
   基线 config 里没有的条目脚本会自动补上代码。
 - **同一个条目写多次时，以最后一行那一行为准**，所以追加区可以覆盖上面的分组开关。
@@ -93,6 +109,27 @@ skip  CONFIG_PACKAGE_luci-app-cpe            # 脚本不干预，保持基线 co
 
 > 平时只是增删插件的话，**直接编辑 `plugins.cfg` 就够了**，不用跑这个脚本。  
 > 只有「字典改了」或「换了新基线 config」时才需要重建。
+
+### 重建的两个坑（很重要）
+
+**坑 1：重建是整份覆盖。** on/off 全部按基线 config 重新算，**不读现有的 `plugins.cfg`**。  
+你在清单里手改过的开关会被清掉。所以正确顺序永远是：
+
+```
+先准备好基线 config / 字典  →  再重建  →  最后精调 plugins.cfg 的 on/off
+```
+
+反过来做（先精调、后重建）等于白改。
+
+**坑 2：只收基线 config 里出现过的条目。** 生成器里有一条 `if key in state` 判断：  
+字典里有、**基线 config 里完全没有**的 CONFIG，跑多少次重建都不会出现在清单里。  
+要加这种插件，只能在清单末尾的「自定义追加区」手写一行：
+
+```
+on   CONFIG_PACKAGE_luci-app-xxx
+```
+
+`gen_config.py` 会把它追加到最终 `.config` 末尾，`make defconfig` 能认。
 
 ---
 
@@ -149,6 +186,45 @@ CONFIG_TARGET_ARCH_PACKAGES="aarch64_generic"
 ⚠️ 平台能自动纠正，但**包选择不能**。别人 config 里如果开了你没有源码的第三方插件，  
 `make defconfig` 会把它们丢掉并打 warning（不影响编译）；想彻底干净就在 `plugins.cfg` 里 `off`。
 
+### 4.2 编译报错的补丁代码放哪个脚本
+
+先记住工作流的真实执行顺序，所有判断都基于它：
+
+```
+part1 → feeds update -a → feeds install -a → part2 → make defconfig → make download → make
+```
+
+（`part2` 内部还会再跑一次 `feeds update/install`，然后依次调用 `clone_thirdparty.sh`、`thirdparty.sh`。）
+
+| 要改的东西 | 放哪个脚本 | 为什么 |
+| --- | --- | --- |
+| `package/lean/*`、`include/*`、`target/*`、`package/base-files`（lede 自带） | **`2512diy-part1.sh`** | 克隆完 lede 就存在；跑在 feeds update 之前，最不会被覆盖 |
+| `feeds/packages/*`、`feeds/luci/*`（feeds 里的包） | **`2512diy-part2.sh`**，且必须写在 `./scripts/feeds install -a` **之后** | feeds 目录那时才存在；part2 自己还会再 update 一次，写前面会被冲掉 |
+| 第三方克隆进来的包 | **`aarch64/Lede2512/thirdparty.sh`** | 克隆完成后自动执行 |
+| 装编译依赖、改全局环境 | `2512diy-part2.sh` 开头 | 早执行 |
+
+**三个坑：**
+
+- **sed 少一个空格就静默失效。** 真实 Makefile 是 `include $(INCLUDE_DIR)/package.mk`，
+  `include` 后面**有空格**；写成 `include$(INCLUDE_DIR)` 匹配不到，你以为补丁打上了其实没有。
+- **不要硬编码交叉编译器前缀。** 用 `$(TARGET_CROSS)gcc` / `$(TARGET_CROSS)g++`，换平台自动正确。
+- **`make package/xxx/clean` 不要写进 diy 脚本。** 那时 `.config` 还没生成（`make defconfig` 在后面），
+  而且 `part2` 开头已经 `rm -rf staging_dir build_dir`，清理本就是多余的。
+
+**通用骨架**（判存在 + 判幂等 + 打日志，三样缺一不可）：
+
+```bash
+MK=package/lean/xxx/Makefile          # 或 feeds/packages/.../Makefile
+if [ ! -f "$MK" ]; then
+    echo "[part1] 跳过：$MK 不存在"
+elif grep -q '你的标记字符串' "$MK"; then
+    echo "[part1] 已修补过，跳过"
+else
+    sed -i '你的替换' "$MK"
+    echo "[part1] 已修补 $MK"
+fi
+```
+
 ---
 
 ## 五、N1 / X96 分开编译
@@ -191,11 +267,14 @@ CONFIG_TARGET_ARCH_PACKAGES="aarch64_generic"
 ## 七、相关文件一览
 
 ```
+.gitattributes            换行符策略（仓库内强制 LF，防止在 Windows 上改出 CRLF）
+.gitignore                忽略规则（Python 缓存、备份文件、临时产物）
 .github/workflows/
   Lede2512_FOL.yml        编译（双设备矩阵，界面选 all/n1/x96）
   Flippy_Lede2512_N1.yml  N1 打包
   Flippy_Lede2512_X96.yml X96 打包
   Rebuild_Plugins.yml     重建插件清单（一键）
+  remove-old-artifacts.yml 定期清理旧工件和缓存
   sshLede2512.yml         在线 SSH 提取 .config（备用，小心封号）
 aarch64/Lede2512/
   Lede2512_FOL.config     基线 config（目标平台/系统/内核/基础包），一般不用改
@@ -234,7 +313,7 @@ scripts/
 
 ---
 
-# 八、在新 GitHub 账号上部署这套项目
+## 八、在新 GitHub 账号上部署这套项目
 
 ## 8.1 哪些文件要上传？
 
@@ -264,6 +343,7 @@ scripts/
 | 路径                                           | 说明                           |
 | -------------------------------------------- | ---------------------------- |
 | `.gitignore`                                 | 挡掉 Python 缓存、备份文件、临时产物       |
+| `.gitattributes`                             | 强制仓库内 LF，防止 Windows 改出 CRLF |
 | `README.md`、`插件说明.md`                        | 说明书                          |
 | `.github/workflows/sshLede2512.yml`          | 备用：在线 SSH 提取 `.config`（小心封号） |
 | `.github/workflows/remove-old-artifacts.yml` | 定期清理旧工件和缓存，可单独跑              |
@@ -289,40 +369,46 @@ scripts/
 1. 新账号 → 右上角 `+` → **New repository**。
 2. 名称建议 `Actions-OpenWrt`，可见性选 **Public**  
    （Public 仓库的 Actions 分钟数免费且不限量；Private 每月只有 2000 分钟，编译很快就不够用）。
-3. 传文件两种方式：
-   - **网页**：仓库首页 → **Add file → Upload files** → 把项目里的文件/文件夹拖进去 → Commit。  
-     注意：**网页拖拽有时会漏掉 `.github` 这种点开头的目录**，传完务必去仓库里确认  
-     `.github/workflows/` 下该有的 yml 都在（2512 这条线是 `Lede2512_FOL.yml`、  
-     `Flippy_Lede2512_N1.yml`、`Flippy_Lede2512_X96.yml`、`Rebuild_Plugins.yml`、`sshLede2512.yml` 共 5 个）。
-   - **命令行（推荐，最稳）**：
-     ```bash
-     cd <项目目录>
-     git init
-     git add -A
-     git commit -m "init: Lede 25.12 云编译"
-     git branch -M main
-     git remote add origin https://github.com/<你的账号>/Actions-OpenWrt.git
-     git push -u origin main
-     ```
+3. 传文件 —— **只用命令行，不要用网页上传**：
+
+   ```bash
+   cd <项目目录>
+   git init
+   git add -A
+   git commit -m "init: Lede 25.12 云编译"
+   git branch -M main
+   git remote add origin https://github.com/<你的账号>/Actions-OpenWrt.git
+   git push -u origin main
+   ```
+
+   > ⚠️ **为什么坚决不用网页 `Add file → Upload files`**：本项目实测踩过三个坑 ——  
+   > ① **会漏文件**：一次上传漏了 7 个（`.gitattributes`、`.gitignore`、`README.md`、
+   > `插件说明.md`、`2512SSHCONFIG.config`、`rebuild_plugins.sh`、`一键重建插件清单.bat`）；  
+   > ② **绕过 `.gitattributes`**：把 Windows 的 CRLF 原样传上去，`插件字典.tsv` 就中过招；  
+   > ③ **历史全是噪音**：每批文件一个 `Add files via upload` 提交，几十条压不下来。  
+   > 另外**空仓库首页没有 `Add file` 按钮**（显示的是 Quick setup 引导页），
+   > 入口是引导文字里的 `uploading an existing file` 链接，或直接访问 `/upload/main`。
+
+   > **Windows 上 git 连不上 GitHub**（报 `CRYPT_E_REVOCATION_OFFLINE`）：
+   > 执行 `git config --local http.sslBackend openssl` 换成 OpenSSL 后端即可，
+   > Windows 自带的 schannel 后端拉不到证书吊销列表会直接失败。
 4. 推送后到 **Settings → Actions → General**，这一页有两三个分组，按下表设即可：
-
-   | 选项 | 怎么设 | 说明 |
-   | --- | --- | --- |
-   | **Actions permissions** | 选 `Allow all actions and reusable workflows` | 公开仓库默认就是这个，一般不用动 |
-   | **Workflow permissions** | 选 `Read and write permissions` | 建议开，但**不勾也能跑**。见下面的说明 |
-   | `Require actions to be pinned to a full-length commit SHA` | **不要勾** | 见下面的说明 |
-   | `Allow GitHub Actions to create and approve pull requests` | **不要勾** | 本项目不需要 |
-
-   **为什么 `Workflow permissions` 不是必须的**：「重建插件清单」这个工作流自己就写了
-   `permissions: contents: write`，而工作流里显式声明的权限会**覆盖**这里的仓库默认值；
-   而且它的 checkout 用的是 `secrets.RELEASES_TOKEN || secrets.GITHUB_TOKEN`，
+   | 选项                                                         | 怎么设                                          | 说明                    |
+   | ---------------------------------------------------------- | -------------------------------------------- | --------------------- |
+   | **Actions permissions**                                    | 选 `Allow all actions and reusable workflows` | 公开仓库默认就是这个，一般不用动      |
+   | **Workflow permissions**                                   | 选 `Read and write permissions`               | 建议开，但**不勾也能跑**。见下面的说明 |
+   | `Require actions to be pinned to a full-length commit SHA` | **不要勾**                                      | 见下面的说明                |
+   | `Allow GitHub Actions to create and approve pull requests` | **不要勾**                                      | 本项目不需要                |
+   **为什么 `Workflow permissions` 不是必须的**：「重建插件清单」这个工作流自己就写了  
+   `permissions: contents: write`，而工作流里显式声明的权限会**覆盖**这里的仓库默认值；  
+   而且它的 checkout 用的是 `secrets.RELEASES_TOKEN || secrets.GITHUB_TOKEN`，  
    配了 PAT 就走 PAT，跟这个开关无关。开着只是为了以后新增工作流时省事。
 
-   **为什么不要勾「Require actions to be pinned to a full-length commit SHA」**：
-   勾上之后，所有按版本号/分支引用的 action **会直接无法运行**，必须全部改成 40 位 commit SHA。
+   **为什么不要勾「Require actions to be pinned to a full-length commit SHA」**：  
+   勾上之后，所有按版本号/分支引用的 action **会直接无法运行**，必须全部改成 40 位 commit SHA。  
    本项目 8 个 action、21 处引用全是 `@v4` / `@v1` / `@main` / `@master` 形式，勾了等于把整条流水线停掉。
 
-   **为什么不要勾「Allow GitHub Actions to create and approve pull requests」**：
+   **为什么不要勾「Allow GitHub Actions to create and approve pull requests」**：  
    本项目所有工作流都是直接 `git push` 到 main（或发 Release），不创建 PR，勾上只会白白扩大权限面。
 
 ## 8.3 需要令牌吗？需要哪些？
@@ -364,6 +450,9 @@ scripts/
 
 ## 8.4 第一次跑的顺序
 
+**动手前先确认两件事**：① 8.2 第 4 步的 Actions 设置已点保存；② 8.3 的 `RELEASES_TOKEN` 已加。
+缺令牌的话，发布 Release 那一步会 403。
+
 1. **建 `Files` 标签的 Release**：Releases → Draft a new release → Tag 填 `Files` →  
    把 F 大（unifreq）的内核文件包（`boot-*.tar.gz`、`*_kernel.tar.gz` 等）上传 → Publish。  
    （打包固件时内核就是从这里取的。）
@@ -374,43 +463,8 @@ scripts/
 5. 以后只改插件：编辑 `aarch64/Lede2512/plugins.cfg` → Commit → 重跑第 2 步。
 
 > 首次编译建议只选一个设备，跑通再选 `all`。  
-> `make defconfig` 阶段日志里会打印「已被依赖强制保留」的清单，可以据此确认没有被误禁。
-
----
-
-```
-                                                                            小白折腾备忘
-
-                           SSH 连接操作 （SSH 在线配置 提取.config用  编译固件 小心封号！！！）
-
-Actions→ 选择「提取Lede2512-config」→ 然后单击Run workflow右侧的按钮。设置SSH connection to Actions 输入 true  点 Run workflow 运行
-
-页面运行到SSH connection to Actions 复制 ssh 会话：ssh FWKDeL121LMd3zeKgKpJ@sfo2.tmate.io
-```
-
-1 键盘 按 q 或 ctrl-c 继续
-
-```
-                           输入 yes  （重新连接有这一步）
-
-                          如果执行 touch /tmp/keepalive 命令去解除15分钟限制
-```
-
-2  cd openwrt && make menuconfig
-
-注意：不要退出，退出后无法保存连接状态。如果退出后，重新进入，会还原系统状态。
-
-3  编译完成后 点Y
-
-4  完成后，按快捷键Ctrl+D或执行exit命令以退出，随后的编译工作将自动进行
-
----
-
-【1】Releases 新建标签 Files（手动上传 F大 打包的内核文件）
-
-【2】Actions → 依次运行 编译Lede2512_FOL → F打包_Lede2512_N1 / F打包_Lede2512_X96
-
-【3】成品在 Releases：Lede2512-N1-日期时间 / Lede2512-X96-日期时间
+> `make defconfig` 阶段日志里会打印「已被依赖强制保留」的清单，可以据此确认没有被误禁。  
+> 整轮编译约 4~5 小时（8 核 runner、`-j8`），中途没有提示是正常的。
 
 ---
 
@@ -427,21 +481,3 @@ Actions→ 选择「提取Lede2512-config」→ 然后单击Run workflow右侧�
 F大  <https://github.com/unifreq/openwrt_packit>
 
 ---
-
-## Acknowledgments
-
-- [P3TERX/Actions-OpenWrt](https://github.com/P3TERX/Actions-OpenWrt)
-- [bin20088/Bin](https://github.com/bin20088/Bin)
-- [Microsoft](https://www.microsoft.com)
-- [Microsoft Azure](https://azure.microsoft.com)
-- [GitHub](https://github.com)
-- [GitHub Actions](https://github.com/features/actions)
-- [tmate](https://github.com/tmate-io/tmate)
-- [mxschmitt/action-tmate](https://github.com/mxschmitt/action-tmate)
-- [csexton/debugger-action](https://github.com/csexton/debugger-action)
-- [Cisco](https://www.cisco.com/)
-- [OpenWrt](https://github.com/openwrt/openwrt)
-- [Lean's OpenWrt](https://github.com/coolsnowwolf/lede)
-- [Cowtransfer](https://cowtransfer.com)
-- [WeTransfer](https://wetransfer.com/)
-- [Mikubill/transfer](https://github.com/Mikubill/transfer)
