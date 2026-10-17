@@ -5,10 +5,10 @@
 
 全程只改仓库里的文本文件 + 在 Actions 页面点几下，**不需要本地编译环境，也不需要 SSH / make menuconfig**。
 
-> **2026-10-17 变更**：
-> · 修正 `F打包_*` 的 `Invalid workflow file` 报错（`jobs.<id>.name` 不支持 `env` 上下文，已改为字面量）；
-> · 修正 Python 包 wheel 名补丁的误伤（`itsdangerous` 等包编译失败）；
-> · `gen_config.py` 新增**平台自动锁定**，换别人的 config 不再需要手改平台行（见 4.1）；
+> **2026-10-17 变更**：  
+> · 修正 `F打包_*` 的 `Invalid workflow file` 报错（`jobs.<id>.name` 不支持 `env` 上下文，已改为字面量）；  
+> · 修正 Python 包 wheel 名补丁的误伤（`itsdangerous` 等包编译失败）；  
+> · `gen_config.py` 新增**平台自动锁定**，换别人的 config 不再需要手改平台行（见 4.1）；  
 > · 补齐网页上传漏掉的 7 个文件，并把碎片提交整理成 4 个有意义的提交。
 >
 > 2026-10-16 变更：旧版本号 `1806` 全部改名为 `2512`（目录、文件名、工作流名、标签名、脚本内容都已同步），  
@@ -30,9 +30,9 @@
 
 **辅助两个**（平时不用管）：
 
-| 工作流 | 作用 |
-| --- | --- |
-| `删除旧工件和缓存` | 删掉旧的 workflow run 和编译缓存，省存储配额，可手动跑 |
+| 工作流                 | 作用                                                      |
+| ------------------- | ------------------------------------------------------- |
+| `删除旧工件和缓存`          | 删掉旧的 workflow run 和编译缓存，省存储配额，可手动跑                      |
 | `提取Lede2512-config` | 备用：在线 SSH 进 Actions 提取 `.config`，**有封号风险，用不上别动**（见文末备忘） |
 
 **运行顺序**：先跑 `编译Lede2512_FOL`（界面里选 `all` / `n1` / `x96`），成功后分别跑两个 `F打包_*`。
@@ -54,7 +54,7 @@ skip  CONFIG_PACKAGE_luci-app-cpe            # 脚本不干预，保持基线 co
 ```
 
 - 清单按 **91 个分组 / 539 项**排列（第一组「目前在用（必需）」→ Docker（dockerman）→  
-  LuCI 应用插件 / 主题 / 协议 → Wifi 基础包 / 下载工具 …），每行末尾 `#` 后面是说明，随便改，不影响解析。
+  LuCI 应用插件 / 主题 / 协议 → Wifi 基础包 / 下载工具 …），每行末尾 `#` 后面是说明，随便改，不影响解析。  
   当前状态是 **on 82 项 / off 457 项**。
 - **加插件**：在文件最末尾「自定义追加区」加一行；包名直接写（会自动补 `CONFIG_PACKAGE_` 前缀），  
   基线 config 里没有的条目脚本会自动补上代码。
@@ -196,19 +196,19 @@ part1 → feeds update -a → feeds install -a → part2 → make defconfig → 
 
 （`part2` 内部还会再跑一次 `feeds update/install`，然后依次调用 `clone_thirdparty.sh`、`thirdparty.sh`。）
 
-| 要改的东西 | 放哪个脚本 | 为什么 |
-| --- | --- | --- |
-| `package/lean/*`、`include/*`、`target/*`、`package/base-files`（lede 自带） | **`2512diy-part1.sh`** | 克隆完 lede 就存在；跑在 feeds update 之前，最不会被覆盖 |
-| `feeds/packages/*`、`feeds/luci/*`（feeds 里的包） | **`2512diy-part2.sh`**，且必须写在 `./scripts/feeds install -a` **之后** | feeds 目录那时才存在；part2 自己还会再 update 一次，写前面会被冲掉 |
-| 第三方克隆进来的包 | **`aarch64/Lede2512/thirdparty.sh`** | 克隆完成后自动执行 |
-| 装编译依赖、改全局环境 | `2512diy-part2.sh` 开头 | 早执行 |
+| 要改的东西                                                                 | 放哪个脚本                                                            | 为什么                                         |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
+| `package/lean/*`、`include/*`、`target/*`、`package/base-files`（lede 自带） | **`2512diy-part1.sh`**                                           | 克隆完 lede 就存在；跑在 feeds update 之前，最不会被覆盖      |
+| `feeds/packages/*`、`feeds/luci/*`（feeds 里的包）                          | **`2512diy-part2.sh`**，且必须写在 `./scripts/feeds install -a` **之后** | feeds 目录那时才存在；part2 自己还会再 update 一次，写前面会被冲掉 |
+| 第三方克隆进来的包                                                             | **`aarch64/Lede2512/thirdparty.sh`**                             | 克隆完成后自动执行                                   |
+| 装编译依赖、改全局环境                                                           | `2512diy-part2.sh` 开头                                            | 早执行                                         |
 
 **三个坑：**
 
-- **sed 少一个空格就静默失效。** 真实 Makefile 是 `include $(INCLUDE_DIR)/package.mk`，
+- **sed 少一个空格就静默失效。** 真实 Makefile 是 `include $(INCLUDE_DIR)/package.mk`，  
   `include` 后面**有空格**；写成 `include$(INCLUDE_DIR)` 匹配不到，你以为补丁打上了其实没有。
 - **不要硬编码交叉编译器前缀。** 用 `$(TARGET_CROSS)gcc` / `$(TARGET_CROSS)g++`，换平台自动正确。
-- **`make package/xxx/clean` 不要写进 diy 脚本。** 那时 `.config` 还没生成（`make defconfig` 在后面），
+- **`make package/xxx/clean` 不要写进 diy 脚本。** 那时 `.config` 还没生成（`make defconfig` 在后面），  
   而且 `part2` 开头已经 `rm -rf staging_dir build_dir`，清理本就是多余的。
 
 **通用骨架**（判存在 + 判幂等 + 打日志，三样缺一不可）：
@@ -302,6 +302,7 @@ scripts/
   respawn_mks.sh          重新生成 openwrt_packit 打包脚本
   whoami                  打包用的版本标识模板
 ```
+
 
 `aarch64/scripts/` 里那 2 个本地脚本**不传也不影响云端编译**——GitHub 是 Linux 环境，  
 `rebuild_plugins.sh` / `.bat` 只在你自己电脑上双击用；真要重建清单，网页上点  
