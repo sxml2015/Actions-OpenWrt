@@ -252,12 +252,6 @@ else
   echo "[part2] openclash 已关闭，跳过"
 fi
 
-# #libcryptopp 编译问题
-# # 在 Makefile 中显式指定编译器
-# sed -i '/include $(INCLUDE_DIR)\/package.mk/a TARGET_CC:=aarch64-openwrt-linux-musl-gcc\nTARGET_CXX:=aarch64-openwrt-linux-musl-g++' package/lean/libcryptopp/Makefile
-# # 清理 libcryptopp 的缓存
-# make package/lean/libcryptopp/clean
-
 #202607 vim报错
 if tp_block vim; then
   echo "[part2] 替换 vim 为 openwrt-18.06 版本"
@@ -292,6 +286,22 @@ fi
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+
+#------------------------------------------------------------------------------
+# libcryptopp 编译问题：在 Makefile 里显式指定编译器
+#   注意：真实 Makefile 是 "include $(INCLUDE_DIR)/package.mk"（include 后有空格）
+#   用 $(TARGET_CROSS) 而非硬编码前缀；带存在性判断 + 幂等判断
+#   清缓存不需要写 make clean —— part2 里已 rm -rf staging_dir build_dir
+#------------------------------------------------------------------------------
+LC_MK=package/lean/libcryptopp/Makefile
+if [ ! -f "$LC_MK" ]; then
+    echo "[part2] 跳过 libcryptopp 修补：$LC_MK 不存在"
+elif grep -q 'TARGET_CC:=\$(TARGET_CROSS)gcc' "$LC_MK"; then
+    echo "[part2] libcryptopp 已修补过，跳过"
+else
+    sed -i '/^include \$(INCLUDE_DIR)\/package\.mk/a TARGET_CC:=$(TARGET_CROSS)gcc\nTARGET_CXX:=$(TARGET_CROSS)g++' "$LC_MK"
+    echo "[part2] 已修补 libcryptopp：显式指定 TARGET_CC / TARGET_CXX"
+fi
 
 #==============================================================================
 # 2026-10-17 修复：python 包的 wheel 文件名大小写不确定 → installer 找不到文件
