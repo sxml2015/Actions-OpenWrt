@@ -53,6 +53,35 @@ EXCLUDE_SYMBOLS = [
 ]
 
 # ------------------------------------------------------------------------------
+# 强制关闭（FORCE_OFF）—— 2026-10-18
+#   用途：某个插件不想要了，但基线 config 里还是 =y。
+#
+#   【为什么不能用 EXCLUDE_SYMBOLS】
+#     EXCLUDE 的语义是「不参与清单，保持基线 config 原值」。
+#     基线里是 CONFIG_xxx=y 的话，排除后它照样 =y，照样被编译进固件。
+#
+#   【本表的语义】
+#     每次重建清单都写成 off（即 "# CONFIG_xxx is not set"），
+#     基线再是 =y 也不会进固件；手改 plugins.cfg 的那个 off 也不会被重建冲掉。
+#
+#   【注意】
+#     · 这里只管「编不编进固件」。第三方源码克不克隆，由
+#       aarch64/Lede2512/thirdparty.cfg 里的 `off block xxx` 控制，两者要一起关。
+#     · 想恢复：把对应行删掉（或注释掉），再重建清单。
+# ------------------------------------------------------------------------------
+FORCE_OFF = [
+    # ---- mosdns 全套（2026-10-18 关闭；thirdparty.cfg 里 mosdns 已 off block）----
+    "CONFIG_PACKAGE_luci-app-mosdns",           # LuCI 界面
+    "CONFIG_PACKAGE_mosdns",                    # 核心程序（少了这行，界面关了核心照样编）
+    "CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn",    # 中文语言包
+    # ---- nlbwmon 带宽监控（2026-10-18 关闭，沿用 plugins.cfg 里已有的 off）----
+    "CONFIG_DEFAULT_luci-app-nlbwmon",
+    "CONFIG_PACKAGE_luci-app-nlbwmon",
+    "CONFIG_PACKAGE_nlbwmon",
+    "CONFIG_PACKAGE_luci-i18n-nlbwmon-zh-cn",
+]
+
+# ------------------------------------------------------------------------------
 # 强制归组：Docker（dockerman）整套。
 #   这些项在字典里已经不再收录、在基线 .config 里也是散落的，
 #   统一归到一个组里，方便集中开关。默认值以基线 .config 为准。
@@ -165,6 +194,12 @@ def main():
         rest = s[m.end():].strip()
         if rest.startswith("#"):
             annotated[key] = rest[1:].strip()
+
+    # ---------- 1.5 强制关闭：基线里是 =y / =m 也一律压成 off ----------
+    #   这样「不想要的插件」在重建清单后依然是 off，不会被基线覆盖回去。
+    forced_off = [k for k in FORCE_OFF if k in state]
+    for k in forced_off:
+        state[k] = "off"
 
     # ---------- 2. 字典 ----------
     tsv_entries = []
@@ -321,6 +356,17 @@ def main():
         buf.append("# " + "=" * 86)
         buf.append("")
 
+    if forced_off:
+        buf.append("# " + "=" * 86)
+        buf.append("#  【强制关闭】下面这些条目在基线 config 里是 =y，但按需求固定为 off（不进固件）。")
+        buf.append("#     重建清单不会把它们重新打开；想恢复就编辑 aarch64/scripts/build_plugins_cfg.py 的 FORCE_OFF。")
+        buf.append("#     第三方源码是否克隆，另由 aarch64/Lede2512/thirdparty.cfg 的 off block 控制。")
+        buf.append("# " + "-" * 86)
+        for k in forced_off:
+            buf.append("#   %-58s # %s" % (k, short_name(k)))
+        buf.append("# " + "=" * 86)
+        buf.append("")
+
     with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(buf) + "\n")
 
@@ -328,6 +374,8 @@ def main():
     print("组数: %d  总项: %d  on: %d  off: %d" % (len(groups), len(keys), n_on, len(keys) - n_on))
     if excluded_hit:
         print("已排除 %d 项：%s" % (len(excluded_hit), ", ".join(excluded_hit)))
+    if forced_off:
+        print("强制关闭 %d 项：%s" % (len(forced_off), ", ".join(forced_off)))
     for g, ks in groups.items():
         print("  %-24s %4d  (on %d)" % (g, len(ks), sum(1 for k in ks if state[k] == "on")))
     return 0

@@ -131,6 +131,38 @@ on   CONFIG_PACKAGE_luci-app-xxx
 
 `gen_config.py` 会把它追加到最终 `.config` 末尾，`make defconfig` 能认。
 
+### 彻底不要某个插件（`FORCE_OFF`）
+
+**坑 3：直接在 `plugins.cfg` 里写 `off`，下次重建就没了。**  
+重建是整份覆盖，`off` 会按基线 config 重新算 —— 基线里是 `=y`，就又变回 `on`。
+
+要让某个插件「永远不编」，把它写进 `aarch64/scripts/build_plugins_cfg.py` 的 `FORCE_OFF` 表：
+
+```python
+FORCE_OFF = [
+    "CONFIG_PACKAGE_luci-app-mosdns",        # 界面
+    "CONFIG_PACKAGE_mosdns",                 # 核心（只关界面，核心照样编进固件）
+    "CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn", # 中文包
+]
+```
+
+| 表                 | 语义                                     | 基线是 `=y` 时     |
+| ----------------- | -------------------------------------- | -------------- |
+| `FORCE_OFF`       | 不参与编译，清单里固定写 `off`                     | **不编**（进不了固件）  |
+| `EXCLUDE_SYMBOLS` | 不参与清单，保持基线 config 原值                   | **照样编**（等于没关）  |
+
+两者不能混用：想「彻底不要」必须用 `FORCE_OFF`。
+
+另外要注意，**关插件要关两处**，它们管的是两件不同的事：
+
+| 文件                                    | 管什么              | mosdns 当前取值                    |
+| ------------------------------------- | ---------------- | ------------------------------ |
+| `aarch64/Lede2512/thirdparty.cfg`     | 克不克隆第三方**源码**    | `off  block mosdns`（跳过克隆）       |
+| `aarch64/Lede2512/plugins.cfg`        | 编不编进**固件**       | 由 `FORCE_OFF` 生成，7 项全 `off`     |
+
+只关 `thirdparty.cfg` 的效果是「不克隆新源码」，但 feeds 自带的那份源码还在，
+基线 `CONFIG_PACKAGE_mosdns=y` 会把它照编进固件 —— 体积和时间都白花。
+
 ---
 
 ## 四、增加第三方插件 —— `aarch64/Lede2512/thirdparty.cfg`
