@@ -187,6 +187,20 @@ def short_name(key):
     return key
 
 
+def plain_key(key):
+    """打印用的名字：保留 luci-app- 前缀、DEFAULT 也标出来，避免和同名项混淆。
+
+    例：CONFIG_PACKAGE_luci-app-mosdns → luci-app-mosdns
+        CONFIG_PACKAGE_mosdns          → mosdns
+        CONFIG_DEFAULT_luci-app-nlbwmon→ 默认·luci-app-nlbwmon
+    """
+    if key.startswith("CONFIG_DEFAULT_"):
+        return "默认·" + key[len("CONFIG_DEFAULT_"):]
+    if key.startswith("CONFIG_PACKAGE_"):
+        return key[len("CONFIG_PACKAGE_"):]
+    return key[len("CONFIG_"):] if key.startswith("CONFIG_") else key
+
+
 def clean_tag(t):
     t = (t or "").strip().lstrip("#=- ").rstrip("= ").strip()
     if not t or "===" in t or t.startswith("CONFIG_") or len(t) > 20:
@@ -450,7 +464,11 @@ def main():
         print("已排除 %d 项：%s" % (len(excluded_hit), ", ".join(excluded_hit)))
     if applied:
         print("追加区覆盖 %d 项：%s"
-              % (len(applied), ", ".join("%s=%s" % (short_name(k), st) for k, st in applied)))
+              % (len(applied), ", ".join("%s=%s" % (plain_key(k), st) for k, st in applied)))
+    only_cfg = [k for k, st in override.items() if st != "skip" and k not in state]
+    if only_cfg:
+        print("追加区另有 %d 项基线里没有这个包，只写进最终 .config：%s"
+              % (len(only_cfg), ", ".join(plain_key(k) for k in only_cfg)))
     if kept_appendix:
         print("追加区保留 %d 行：来自 %s" % (len(kept_appendix), keep_path))
     elif not args.no_keep:
