@@ -1,9 +1,6 @@
 #!/bin/bash
 #============================================================
-# sxml
-# 2026-10-11 2512
-#https://github.com/HoldOnBro/Actions-OpenWrt
-#https://github.com/breakings/OpenWrt
+# 2026-10-16 2512    sxml2015
 #============================================================
 # 2026-10-16 改造：
 #   1) 所有第三方源码克隆块受 aarch64/Lede2512/thirdparty.cfg 的 block 开关控制，
@@ -254,9 +251,9 @@ fi
 
 # #libcryptopp 编译问题
 # # 在 Makefile 中显式指定编译器
-sed -i '/include $(INCLUDE_DIR)\/package.mk/a TARGET_CC:=aarch64-openwrt-linux-musl-gcc\nTARGET_CXX:=aarch64-openwrt-linux-musl-g++' package/lean/libcryptopp/Makefile
+# sed -i '/include $(INCLUDE_DIR)\/package.mk/a TARGET_CC:=aarch64-openwrt-linux-musl-gcc\nTARGET_CXX:=aarch64-openwrt-linux-musl-g++' package/lean/libcryptopp/Makefile
 # # 清理 libcryptopp 的缓存
-make package/lean/libcryptopp/clean
+# make package/lean/libcryptopp/clean
 
 #202607 vim报错
 if tp_block vim; then
