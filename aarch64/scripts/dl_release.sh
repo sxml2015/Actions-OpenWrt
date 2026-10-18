@@ -54,10 +54,22 @@ if [ -z "$URLS" ]; then
     exit 1
 fi
 
+# 从 URL 末段取文件名时必须做 URL 解码。
+#   GitHub 会把资产名里的 "+" 编码成 "%2B"：
+#     资产名  boot-6.12.113-flippy-95+o.tar.gz
+#     下载 URL .../download/Files/boot-6.12.113-flippy-95%2Bo.tar.gz
+#   直接拿 URL 末段当文件名，落盘就成了 "...-95%2Bo.tar.gz"，
+#   scripts/respawn_mks.sh 里的 find -name "boot*+o.tar.gz" 匹配不到，
+#   KERNEL_VERSION 被写成空串，打包时报 "文件: [/opt/kernel/modules-.tar.gz] 不存在!"。
+url_decode() {
+    printf '%b' "${1//%/\\x}"
+}
+
 FAILED=0
 for u in $URLS; do
     f="${u%%\?*}"
     f="${f##*/}"
+    f="$(url_decode "$f")"
     echo "[下载]   $f"
     if ! curl -fL --retry 3 --retry-delay 3 "${AUTH[@]}" -o "$f" "$u"; then
         echo "[下载]   !! 下载失败：$u"

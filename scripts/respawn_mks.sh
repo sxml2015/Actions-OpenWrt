@@ -3,9 +3,27 @@
 cd /opt/openwrt_packit
 cp make.env makeplus.env
 
+#兼容历史：早期下载脚本没做 URL 解码，会把资产名里的 "+" 存成 "%2B"
+for f in /opt/kernel/*%2B*; do
+    [ -e "$f" ] || continue
+    nf="${f//%2B/+}"
+    mv -f "$f" "$nf" && echo "[respawn] 修正文件名: $(basename "$nf")"
+done
+
 #sync the kernel version
-KV=$(find /opt/kernel/ -name "boot*+o.tar.gz" | awk -F '[-.]' '{print $2"."$3"."$4"-"$5"-"$6}')
-KPPV=$(find /opt/kernel/ -name "boot*+.tar.gz" | awk -F '[-.]' '{print $2"."$3"."$4"-"$5"-"$6}')
+#  -printf '%f' 只输出文件名，避免 awk 依赖目录层级（用相对路径时 $2..$6 会错位）
+KV=$(find /opt/kernel/ -name "boot*+o.tar.gz" -printf '%f\n' | head -1 | awk -F '[-.]' '{print $2"."$3"."$4"-"$5"-"$6}')
+KPPV=$(find /opt/kernel/ -name "boot*+.tar.gz" -printf '%f\n' | head -1 | awk -F '[-.]' '{print $2"."$3"."$4"-"$5"-"$6}')
+
+if [ -z "$KV" ] || [ -z "$KPPV" ]; then
+    echo "!! 无法从 /opt/kernel 解析内核版本号，停止打包"
+    echo "   KV='$KV'   KPPV='$KPPV'"
+    echo "   期望文件名形如 boot-6.12.113-flippy-95+o.tar.gz / boot-6.18.57-flippy-95+.tar.gz"
+    echo "   实际目录内容："
+    ls -la /opt/kernel 2>/dev/null || echo "   （目录不存在）"
+    exit 1
+fi
+echo "[respawn] KERNEL_VERSION(basic)=$KV  KERNEL_VERSION(plus)=$KPPV"
 #KPV=$(find /opt/kernel/ -name "boot-5\.16*+.tar.gz" | awk -F '[-.]' '{print $2"."$3"."$4"-"$5"-"$6}')
 #KPPV=$(find /opt/kernel/ -name "boot-5\.19*+.tar.gz" | awk -F '[-.]' '{print $2"."$3"."$4"-"$5"-"$6}')
 sed -i "s/^    KERNEL_VERSION.*/    KERNEL_VERSION=\"$KV\"/" make.env

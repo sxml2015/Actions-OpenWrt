@@ -26,6 +26,16 @@ if [ -z "$OpVersion" ]; then
     exit 0
 fi
 
+# 源码里的 zzz-default-settings 保存的是模板值（R@BUILD_DATE@ 这类占位符），
+# 真实版本号由构建过程替换后写进 /etc/openwrt_release。
+# 读到占位符时保持 whoami 原值，避免镜像里出现 R@BUILD_DATE@。
+case "$OpVersion" in
+    *@*)
+        echo "!! 读到的是模板占位符（$OpVersion），不是真实版本号，保留 whoami 原值"
+        exit 0
+        ;;
+esac
+
 if [ -f "$WS/scripts/whoami" ]; then
     sed -i "s/OPENWRT_VER=.*/OPENWRT_VER=\"$OpVersion\"/" "$WS/scripts/whoami"
     echo "已更新 $WS/scripts/whoami"
