@@ -1,6 +1,9 @@
 #!/bin/bash
 #============================================================
-# 2026-10-16 2512    sxml2015
+# sxml
+# 2026-10-18 2512
+#https://github.com/HoldOnBro/Actions-OpenWrt
+#https://github.com/breakings/OpenWrt
 #============================================================
 # 2026-10-16 改造：
 #   1) 所有第三方源码克隆块受 aarch64/Lede2512/thirdparty.cfg 的 block 开关控制，
