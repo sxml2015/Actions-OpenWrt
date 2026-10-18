@@ -160,7 +160,9 @@ jobs:
         prerelease: false
         allowUpdates: true
         tag: ${{ env.FILE_NAME }}-${{ env.DATE1 }}
-        commit: master
+        # target_commitish：本仓库默认分支是 main，不是 master。
+        # 写错会导致新建标签失败，报 422 "tag_name is not a valid tag"。
+        commit: main
         token: ${{ secrets.RELEASES_TOKEN }}
         body: |
           默认IP：192.168.1.1 默认密码： password
