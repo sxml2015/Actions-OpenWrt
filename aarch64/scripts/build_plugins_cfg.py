@@ -131,6 +131,70 @@ def decode(path):
         return data.decode("utf-16")
 
 
+# 纯装饰用分隔线，例如 "# ====..." / "# ----..."，用来切分清单里的各个区
+RE_SEP = re.compile(r"^#\s*[=\-]{10,}\s*$")
+
+
+def is_separator(line):
+    return bool(RE_SEP.match(line.strip()))
+
+
+def read_append_zone(path):
+    """读出现有 plugins.cfg 里「自定义追加区」手写的条目。
+
+    重建是整份覆盖，但追加区里手写的新插件（基线 config 里没有的项）
+    重建一次就会消失——那份手写内容生成器无从推导，只能从旧文件里捞回来。
+    这里只取「自定义追加区」那一段，遇到下一个分隔线（如「已排除」区）就停。
+    """
+    if not path or not os.path.isfile(path):
+        return []
+    lines = decode(path).splitlines()
+
+    # 1) 定位「自定义追加区」标题行
+    #    注意：文件顶部的使用说明里也提到这四个字（「自定义追加区」按 <on|off> …），
+    #    所以取「最后一个」匹配，并且优先匹配带全角括号的正式标题。
+    start = None
+    for i, ln in enumerate(lines):
+        if "自定义追加区（" in ln:
+            start = i
+    if start is None:
+        for i, ln in enumerate(lines):
+            if "自定义追加区" in ln:
+                start = i
+    if start is None:
+        return []
+
+    # 2) 跳过标题块（标题行 + 示例注释），直到结束分隔线
+    i = start
+    while i < len(lines) and not is_separator(lines[i]):
+        i += 1
+    if i >= len(lines):
+        return []
+    i += 1                      # 越过标题块的结束分隔线
+
+    # 3) 收集到下一个分隔线（「已排除」区开头）或文件末尾
+    raw = []
+    while i < len(lines) and not is_separator(lines[i]):
+        raw.append(lines[i].rstrip())
+        i += 1
+
+    # 4) 只保留「注释」和「合法的 on/off/skip 条目」，其余视为脏行
+    kept = []
+    for ln in raw:
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("#"):
+            kept.append(ln)
+            continue
+        parts = s.split("#", 1)[0].split()
+        if len(parts) >= 2 and parts[0].lower() in ("on", "off", "skip"):
+            kept.append(ln)
+        else:
+            print("  ! 追加区这一行无法识别，重建时未保留：%s" % s)
+    return kept
+
+
 def short_name(key):
     for p in ("CONFIG_PACKAGE_luci-app-", "CONFIG_PACKAGE_luci-theme-",
               "CONFIG_PACKAGE_luci-i18n-", "CONFIG_PACKAGE_luci-proto-",
@@ -160,6 +224,10 @@ def main():
                     help="额外要排除的 CONFIG 名（逗号分隔），与内置排除合并")
     ap.add_argument("--keep-excluded", action="store_true",
                     help="不做任何排除（Docker 条目会重新出现在清单里）")
+    ap.add_argument("--keep-from", default=None,
+                    help="从哪个旧 plugins.cfg 里保留「自定义追加区」的手写条目（默认 = --out 指向的文件）")
+    ap.add_argument("--no-keep", action="store_true",
+                    help="不保留追加区手写条目（整份覆盖，旧的覆盖行为）")
     args = ap.parse_args()
 
     if not os.path.isfile(args.config):
@@ -173,6 +241,11 @@ def main():
         excluded.update(EXCLUDE_SYMBOLS)
         if args.exclude:
             excluded.update(x.strip() for x in args.exclude.split(",") if x.strip())
+
+    # ---------- 0. 追加区手写条目的继承 ----------
+    #  没有这一条，重建一次就把你手写的 `on luci-app-xxx` 冲掉了。
+    keep_path = None if args.no_keep else (args.keep_from or args.out)
+    kept_appendix = read_append_zone(keep_path)
 
     # ---------- 1. 基线 config 的真实状态 ----------
     #   on   = CONFIG_xxx=y          编译进固件
@@ -341,8 +414,15 @@ def main():
     buf.append("#  例： on   luci-app-xxx              # 新增插件（包名直接写，会自动加 CONFIG_PACKAGE_ 前缀）")
     buf.append("#      on   CONFIG_PACKAGE_yyy         # 也可以直接写完整 CONFIG 名")
     buf.append("#      off  luci-app-bar")
+    buf.append("#  这一区的内容「重建时不会被清掉」，重建会把你手写的行原样带过来。")
+    if kept_appendix:
+        buf.append("#  ↓↓↓ 上次保留下来的手写条目有 %d 行，紧跟在下面的分隔线之后 ↓↓↓" % len(kept_appendix))
     buf.append("# " + "=" * 86)
     buf.append("")
+
+    if kept_appendix:
+        buf.extend(kept_appendix)
+        buf.append("")
 
     if excluded_hit:
         buf.append("# " + "=" * 86)
@@ -376,6 +456,10 @@ def main():
         print("已排除 %d 项：%s" % (len(excluded_hit), ", ".join(excluded_hit)))
     if forced_off:
         print("强制关闭 %d 项：%s" % (len(forced_off), ", ".join(forced_off)))
+    if kept_appendix:
+        print("追加区保留 %d 行：来自 %s" % (len(kept_appendix), keep_path))
+    elif not args.no_keep:
+        print("追加区：没有手写条目需要保留")
     for g, ks in groups.items():
         print("  %-24s %4d  (on %d)" % (g, len(ks), sum(1 for k in ks if state[k] == "on")))
     return 0

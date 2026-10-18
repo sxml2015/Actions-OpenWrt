@@ -73,8 +73,6 @@ on	CONFIG_PACKAGE_kmod-rtlwifi=y	# CONFIG_PACKAGE_kmod-rtlwifi is not set#Wifi�
 on	CONFIG_PACKAGE_kmod-rtlwifi-usb=y	# CONFIG_PACKAGE_kmod-rtlwifi-usb is not set#Wifi基础包
 # =======================================  Lede 2512 ============================================================
 on	CONFIG_PACKAGE_luci-app-ikoolproxy=y	# CONFIG_PACKAGE_luci-app-ikoolproxy is not set#去广告
-on	# CONFIG_PACKAGE_luci-app-mosdns is not set	CONFIG_PACKAGE_luci-app-mosdns=y
-on	CONFIG_PACKAGE_luci-i18n-xlnetacc-zh-cn=y	CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y
 on	CONFIG_PACKAGE_luci-app-pppwn=y	# CONFIG_PACKAGE_luci-app-pppwn is not set#pppwn
 on	CONFIG_PACKAGE_luci-i18n-pppwn-zh-cn=y	# CONFIG_PACKAGE_luci-i18n-pppwn-zh-cn is not set#pppwn
 on	CONFIG_PACKAGE_pppwn-cpp=y	# CONFIG_PACKAGE_pppwn-cpp is not set#pppwn
@@ -267,7 +265,6 @@ on	CONFIG_PACKAGE_luci-i18n-aliyundrive-fuse-zh-cn=y	# CONFIG_PACKAGE_luci-i18n-
 on	CONFIG_PACKAGE_aliyundrive-fuse=y	# CONFIG_PACKAGE_aliyundrive-fuse is not set#阿里云盘fuse
 on	CONFIG_PACKAGE_koolproxy=y	# CONFIG_PACKAGE_koolproxy is not set#去广告
 on	# CONFIG_PACKAGE_luci-app-wrtbwmon is not set	CONFIG_PACKAGE_luci-app-wrtbwmon=y
-on	# CONFIG_PACKAGE_nlbwmon is not set is not set	CONFIG_PACKAGE_nlbwmon=y
 on	CONFIG_PACKAGE_sagernet-core=y	# CONFIG_PACKAGE_sagernet-core is not set#SagerNet
 on	# CONFIG_PACKAGE_ssocks is not set	CONFIG_PACKAGE_ssocks=y
 on	# CONFIG_PACKAGE_ssocksd is not set	CONFIG_PACKAGE_ssocksd=y
