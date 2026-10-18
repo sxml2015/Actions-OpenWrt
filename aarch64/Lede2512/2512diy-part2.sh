@@ -1,6 +1,6 @@
 #!/bin/bash
 #============================================================
-# sxml
+# sxml2015
 # 2026-10-18 2512
 #https://github.com/HoldOnBro/Actions-OpenWrt
 #https://github.com/breakings/OpenWrt
