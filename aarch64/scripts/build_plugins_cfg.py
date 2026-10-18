@@ -53,33 +53,16 @@ EXCLUDE_SYMBOLS = [
 ]
 
 # ------------------------------------------------------------------------------
-# 强制关闭（FORCE_OFF）—— 2026-10-18
-#   用途：某个插件不想要了，但基线 config 里还是 =y。
+# 关于「某个插件不想要了」——不需要在这里加任何表（2026-10-18 简化）
 #
-#   【为什么不能用 EXCLUDE_SYMBOLS】
-#     EXCLUDE 的语义是「不参与清单，保持基线 config 原值」。
-#     基线里是 CONFIG_xxx=y 的话，排除后它照样 =y，照样被编译进固件。
+#   直接在 plugins.cfg 末尾的「自定义追加区」写一行：
+#       off   luci-app-mosdns
 #
-#   【本表的语义】
-#     每次重建清单都写成 off（即 "# CONFIG_xxx is not set"），
-#     基线再是 =y 也不会进固件；手改 plugins.cfg 的那个 off 也不会被重建冲掉。
-#
-#   【注意】
-#     · 这里只管「编不编进固件」。第三方源码克不克隆，由
-#       aarch64/Lede2512/thirdparty.cfg 里的 `off block xxx` 控制，两者要一起关。
-#     · 想恢复：把对应行删掉（或注释掉），再重建清单。
+#   这一行会：① 在最终 .config 里压掉基线的 =y（# CONFIG_xxx is not set）；
+#             ② 重建清单时被原样保留，并且自动回写到上面的分组里（显示成 off），
+#                所以不需要改这个脚本、也不会被基线还原成 on。
+#   注意 off 只决定「编不编进固件」，第三方源码要不要克隆由 thirdparty.cfg 控制。
 # ------------------------------------------------------------------------------
-FORCE_OFF = [
-    # ---- mosdns 全套（2026-10-18 关闭；thirdparty.cfg 里 mosdns 已 off block）----
-    "CONFIG_PACKAGE_luci-app-mosdns",           # LuCI 界面
-    "CONFIG_PACKAGE_mosdns",                    # 核心程序（少了这行，界面关了核心照样编）
-    "CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn",    # 中文语言包
-    # ---- nlbwmon 带宽监控（2026-10-18 关闭，沿用 plugins.cfg 里已有的 off）----
-    "CONFIG_DEFAULT_luci-app-nlbwmon",
-    "CONFIG_PACKAGE_luci-app-nlbwmon",
-    "CONFIG_PACKAGE_nlbwmon",
-    "CONFIG_PACKAGE_luci-i18n-nlbwmon-zh-cn",
-]
 
 # ------------------------------------------------------------------------------
 # 强制归组：Docker（dockerman）整套。
@@ -268,11 +251,28 @@ def main():
         if rest.startswith("#"):
             annotated[key] = rest[1:].strip()
 
-    # ---------- 1.5 强制关闭：基线里是 =y / =m 也一律压成 off ----------
-    #   这样「不想要的插件」在重建清单后依然是 off，不会被基线覆盖回去。
-    forced_off = [k for k in FORCE_OFF if k in state]
-    for k in forced_off:
-        state[k] = "off"
+    # ---------- 1.5 追加区手写开关回写到分组 ----------
+    #   你在「自定义追加区」写的 on/off 是「最终指令」，分组里那一行要跟着显示成同样
+    #   的状态，否则会出现「分组里 on、实际是 off」的误导画面。
+    #   语义与 gen_config.py 完全一致：后面的覆盖前面的；skip = 保持基线原值。
+    override = OrderedDict()
+    for raw in kept_appendix:
+        s = raw.strip()
+        if not s or s.startswith("#"):
+            continue
+        body = s.split("#", 1)[0].strip()
+        parts = body.split()
+        if len(parts) < 2:
+            continue
+        st, name = parts[0].lower(), parts[1]
+        if st not in ("on", "off", "skip"):
+            st = "on"
+        key = name if name.upper().startswith("CONFIG_") else "CONFIG_PACKAGE_" + name
+        key = re.sub(r"=.*$", "", key)
+        override[key] = st
+    applied = [(k, st) for k, st in override.items() if st != "skip" and k in state]
+    for k, st in applied:
+        state[k] = st
 
     # ---------- 2. 字典 ----------
     tsv_entries = []
@@ -372,9 +372,10 @@ def main():
     buf.append("#    3) 行首 skip → 脚本不干预       （保持基线 config 原值）")
     buf.append("#       基线里是 CONFIG_xxx=m（只编成 ipk、不装进固件）的项，默认就是 skip；")
     buf.append("#       想把它装进固件，把 skip 改成 on 即可。")
-    buf.append("#    4) 新增插件：在文件最末尾「自定义追加区」按 <on|off> <包名或 CONFIG 名> 加一行")
+    buf.append("#    4) 新增 / 关闭插件：在文件最末尾「自定义追加区」按 <on|off> <包名或 CONFIG 名> 加一行")
     buf.append("#       例： on   luci-app-xxx        → 自动变成 CONFIG_PACKAGE_luci-app-xxx=y")
-    buf.append("#           on   CONFIG_PACKAGE_yyy  → 原样使用")
+    buf.append("#           off  luci-app-yyy        → 自动变成 # CONFIG_PACKAGE_luci-app-yyy is not set")
+    buf.append("#           on   CONFIG_PACKAGE_zzz  → 原样使用")
     buf.append("#       同一个条目写多次时，以「后面那一行」为准，所以追加区可以覆盖上面的分组开关。")
     buf.append("#    5) \"#\" 开头的是注释；行尾 \"#\" 后面是说明，随便改")
     buf.append("#")
@@ -413,8 +414,12 @@ def main():
     buf.append("#  自定义追加区（基线 config 里没有的条目，脚本会自动补到 .config 末尾）")
     buf.append("#  例： on   luci-app-xxx              # 新增插件（包名直接写，会自动加 CONFIG_PACKAGE_ 前缀）")
     buf.append("#      on   CONFIG_PACKAGE_yyy         # 也可以直接写完整 CONFIG 名")
-    buf.append("#      off  luci-app-bar")
-    buf.append("#  这一区的内容「重建时不会被清掉」，重建会把你手写的行原样带过来。")
+    buf.append("#      off  luci-app-bar               # 关闭某个插件（会压掉上面分组里的 on）")
+    buf.append("#  两条规则：")
+    buf.append("#    1) 这里写的 on/off 会「覆盖」上面分组里的同名项（后面的覆盖前面的）。")
+    buf.append("#       重建清单时会自动回写，所以分组那边也会跟着显示成同样的状态。")
+    buf.append("#    2) 这一区的内容重建时不会被清掉，手写的行会原样带过来。")
+    buf.append("#  所以「不想要某个插件」只需在这里写一行 off，不用改任何脚本。")
     if kept_appendix:
         buf.append("#  ↓↓↓ 上次保留下来的手写条目有 %d 行，紧跟在下面的分隔线之后 ↓↓↓" % len(kept_appendix))
     buf.append("# " + "=" * 86)
@@ -436,17 +441,6 @@ def main():
         buf.append("# " + "=" * 86)
         buf.append("")
 
-    if forced_off:
-        buf.append("# " + "=" * 86)
-        buf.append("#  【强制关闭】下面这些条目在基线 config 里是 =y，但按需求固定为 off（不进固件）。")
-        buf.append("#     重建清单不会把它们重新打开；想恢复就编辑 aarch64/scripts/build_plugins_cfg.py 的 FORCE_OFF。")
-        buf.append("#     第三方源码是否克隆，另由 aarch64/Lede2512/thirdparty.cfg 的 off block 控制。")
-        buf.append("# " + "-" * 86)
-        for k in forced_off:
-            buf.append("#   %-58s # %s" % (k, short_name(k)))
-        buf.append("# " + "=" * 86)
-        buf.append("")
-
     with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(buf) + "\n")
 
@@ -454,8 +448,9 @@ def main():
     print("组数: %d  总项: %d  on: %d  off: %d" % (len(groups), len(keys), n_on, len(keys) - n_on))
     if excluded_hit:
         print("已排除 %d 项：%s" % (len(excluded_hit), ", ".join(excluded_hit)))
-    if forced_off:
-        print("强制关闭 %d 项：%s" % (len(forced_off), ", ".join(forced_off)))
+    if applied:
+        print("追加区覆盖 %d 项：%s"
+              % (len(applied), ", ".join("%s=%s" % (short_name(k), st) for k, st in applied)))
     if kept_appendix:
         print("追加区保留 %d 行：来自 %s" % (len(kept_appendix), keep_path))
     elif not args.no_keep:
