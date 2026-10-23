@@ -190,7 +190,7 @@ if tp_block amlogic; then
   rm -rf luci-app-amlogic
   #修改晶晨宝盒默认配置
   # 1.设置OpenWrt 文件的下载仓库
-  sed -i "s|https.*/OpenWrt|https://github.com/sxml/Actions-OpenWrt|g" package/luci-app-amlogic/root/etc/config/amlogic
+  sed -i "s|https.*/OpenWrt|https://github.com/sxml2015/Actions-OpenWrt|g" package/luci-app-amlogic/root/etc/config/amlogic
   # 2.设置 Releases 里 Tags 的关键字（按设备区分，由工作流传入 AML_TAG_KEYWORD）
   if [ -n "$AML_TAG_KEYWORD" ]; then
     sed -i "s|option github_releases_tag '.*'|option github_releases_tag '$AML_TAG_KEYWORD'|" package/luci-app-amlogic/root/etc/config/amlogic
