@@ -433,3 +433,69 @@ PY
     echo "[part2] 信道分析视图不在（或路径变化），跳过删除"
   fi
 fi
+
+#==============================================================================
+# 2026-10-28 Syncthing 官方二进制替换（替代刷机后手动跑 syncthing-upgrade.sh）
+#------------------------------------------------------------------------------
+# 背景：feeds/packages 的 syncthing 停在 1.24.0，是 go1.27.1 编的，带 Go 1.26+
+#   crypto/tls 会话票据缺陷，会持续 panic 重启；官方 v2 只发 tar.gz、没有 ipk。
+#   原来的做法是刷完机手动跑 syncthing-upgrade.sh 替换 /usr/bin/syncthing，
+#   每次 sysupgrade 都要重来一遍 —— 这里把同一件事搬到编译期做掉。
+#
+# 做法（三个文件都在 aarch64/Lede2512/syncthing/）：
+#   1) syncthing-bin.mk 覆盖包内 Makefile：改为下载官方 linux-arm64 tar.gz、
+#      直接装二进制。不再构建 golang/host（省 8~15 分钟），opkg 版本号变成
+#      真实的 2.x，LuCI 软件包页不再显示 1.24.0。
+#   2) syncthing.init 覆盖包内 files/syncthing.init：极简 procd 版，
+#      含 home 挂载点校验，防止 Device ID 漂移。
+#   3) syncthing.conf 覆盖包内 files/syncthing.conf：默认 enabled=1 /
+#      home=/mnt/sda1/Syncthing / gui 8586。这是 conffile，已刷机的设备
+#      sysupgrade 会保留自己的 /etc/config/syncthing，默认值只在全新刷机
+#      或恢复出厂时生效。
+#
+# 跳过逻辑（两项都可重复执行）：
+#   · Makefile 里已有 ST-OFFICIAL-BIN 标记 → 不再覆盖；
+#   · feed 的 PKG_VERSION 已 >= ST_VER（上游跟进了 2.x）→ 保留源码编译，
+#     但仍覆盖 init，因为挂载保护必须留在固件里。
+#
+# 只覆盖 Makefile，不动包内 files/ 目录（syncthing-sysctl.conf 仍用原文件）。
+#==============================================================================
+ST_DIR=feeds/packages/utils/syncthing
+ST_SRC="$HERE/syncthing"
+ST_VER=2.1.7
+ST_SHA256=48e456690cd2b97e7d26b02b5ac35f62a3b36172267b144cfeaf02c993ab955c
+
+if [ ! -d "$ST_DIR" ]; then
+    echo "[part2] 跳过 Syncthing 处理：$ST_DIR 不存在（feed 结构变化？）"
+elif [ ! -f "$ST_SRC/syncthing-bin.mk" ]; then
+    echo "[part2] 跳过 Syncthing 处理：缺少 $ST_SRC/syncthing-bin.mk"
+else
+    # ---- 1) init：无论是否替换 Makefile 都要写（挂载保护靠它）----
+    if grep -q 'SYNC-MIN-INIT' "$ST_DIR/files/syncthing.init" 2>/dev/null; then
+        echo "[part2] Syncthing init 已是极简版（含挂载保护），跳过"
+    else
+        cp -f "$ST_SRC/syncthing.init" "$ST_DIR/files/syncthing.init"
+        echo "[part2] 已写入极简 init：/etc/init.d/syncthing（含 home 挂载点校验）"
+    fi
+
+    # ---- 2) 默认 UCI 配置 ----
+    cp -f "$ST_SRC/syncthing.conf" "$ST_DIR/files/syncthing.conf"
+    echo "[part2] 已写入 syncthing 默认配置（enabled=1 / home=/mnt/sda1/Syncthing）"
+
+    # ---- 3) Makefile：已是二进制版、或 feed 版本已跟上，就不动 ----
+    FEED_VER=$(sed -n 's/^PKG_VERSION:=\(.*\)$/\1/p' "$ST_DIR/Makefile" | head -n1)
+    NEWER=$(printf '%s\n%s\n' "$FEED_VER" "$ST_VER" | sort -V | tail -n1)
+    if grep -q 'ST-OFFICIAL-BIN' "$ST_DIR/Makefile" 2>/dev/null; then
+        echo "[part2] Syncthing Makefile 已是官方二进制版，跳过"
+    elif [ -n "$FEED_VER" ] && [ "$NEWER" = "$FEED_VER" ]; then
+        echo "[part2] feed 版本 $FEED_VER >= $ST_VER，上游已跟进，保留源码编译"
+    else
+        if [ -f "$ST_DIR/Makefile" ]; then
+            cp -f "$ST_DIR/Makefile" "$ST_DIR/Makefile.feed.bak"
+        fi
+        sed -e "s|@ST_VER@|$ST_VER|g" -e "s|@ST_SHA256@|$ST_SHA256|g" \
+            "$ST_SRC/syncthing-bin.mk" > "$ST_DIR/Makefile"
+        echo "[part2] 已替换 Syncthing Makefile -> 官方 v$ST_VER 预编译二进制（feed 版本 ${FEED_VER:-未知}）"
+        echo "[part2]   原 Makefile 备份为 Makefile.feed.bak；不再构建 golang/host"
+    fi
+fi

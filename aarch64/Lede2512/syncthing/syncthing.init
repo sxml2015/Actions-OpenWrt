@@ -1,0 +1,101 @@
+#!/bin/sh /etc/rc.common
+# ---- SYNC-MIN-INIT ----
+# ==========================================================================
+# Syncthing 极简 procd 启动脚本（同时兼容 v1.x 与 v2.x）
+#
+# 这份脚本由 2512diy-part2.sh 在编译期覆盖到
+#   feeds/packages/utils/syncthing/files/syncthing.init
+# 因此固件里 /etc/init.d/syncthing 就是它，刷机后不需要再手工安装。
+#
+# ── 设计原则：只传验证过能用的参数 ──────────────────────────────────
+#     --home  --gui-address  --no-browser  --no-restart
+#
+#   故意不写 serve 子命令：裸 syncthing 已验证可以正常起服务，
+#     多写一个子命令就多一个出错点。
+#   故意不传 --log-file：v2 里这个参数改过名，未核实前不赌，
+#     日志由 procd 收进 syslog（logread -f | grep -i syncthing）。
+#   故意不用 uci_validate_section：一旦类型声明不被当前 OpenWrt 版本接受，
+#     该函数会返回非 0 并让变量保持空值，紧接着
+#     `[ "$enabled" = 1 ] || return 0` 就会静默退出整个 start_service，
+#     表现是"触发器注册了、实例没创建、日志一行没有"，极难排查。
+#     这里改用 config_get / config_get_bool，不做类型校验。
+#
+# ── 为什么必须自己写这份 init ──────────────────────────────────────
+#   OpenWrt feed 带的原厂 init 按 Syncthing v1 语法传参，其中
+#   --no-default-folder 在 v2.0.0 已被彻底删除（v2 没有"默认文件夹"概念），
+#   于是换成 v2 二进制后立刻崩溃循环：
+#       syncthing: error: unknown flag --no-default-folder
+#       procd: Instance syncthing::instance1 in a crash loop 6 crashes
+#
+# ── 磁盘挂载保护 ───────────────────────────────────────────────────
+#   home 位于挂载点上、而磁盘还没挂上时，Syncthing 会在根分区凭空创建
+#   home、生成一套全新证书（Device ID 漂移）、并把同步数据写进 eMMC。
+#   本机历史上已因此漂移过三次 Device ID，所以这里直接拒绝启动。
+#   若开机时盘确实还没挂上，手动 /etc/init.d/syncthing restart 即可。
+#
+# ── 依赖的 UCI 配置（/etc/config/syncthing，节名 syncthing）──────────
+#   enabled / home / gui_address / nice / user / group / macprocs
+# ==========================================================================
+
+START=90
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/bin/syncthing
+
+start_service() {
+	config_load syncthing
+
+	config_get_bool enabled syncthing enabled 0
+	if [ "$enabled" != 1 ]; then
+		logger -t syncthing "uci 中 enabled 不为 1，跳过启动"
+		return 0
+	fi
+
+	config_get home     syncthing home        /mnt/sda1/Syncthing
+	config_get guiaddr  syncthing gui_address 0.0.0.0:8384
+	config_get niceval  syncthing nice        0
+	config_get user     syncthing user        root
+	config_get group    syncthing group       root
+	config_get macprocs syncthing macprocs    ""
+	config_get maxprocs syncthing maxprocs    ""
+
+	# 兼容旧写法：有的版本用 macprocs，有的用 maxprocs
+	[ -n "$macprocs" ] || macprocs="$maxprocs"
+
+	# ---- 关键保护：home 在挂载点上，必须确认磁盘已挂载 ----
+	# 未挂载就启动会在 rootfs 上重建 home 与新证书，Device ID 随之漂移。
+	case "$home" in
+	/mnt/*)
+		mp=$(echo "$home" | cut -d/ -f1-3)
+		if ! grep -q " $mp " /proc/mounts; then
+			logger -t syncthing "挂载点 $mp 未挂载，拒绝启动（避免生成新 Device ID）"
+			echo "syncthing: 挂载点 $mp 未挂载，拒绝启动" >&2
+			return 1
+		fi
+		;;
+	esac
+
+	[ -d "$home" ] || mkdir -p "$home" 2>/dev/null
+
+	logger -t syncthing "启动中: home=$home gui=$guiaddr 并发=${macprocs:-自动}"
+
+	procd_open_instance
+	procd_set_param command "$PROG" --home="$home" --gui-address="$guiaddr" --no-browser --no-restart
+	if [ -n "$macprocs" ]; then
+		procd_set_param env GOMAXPROCS="$macprocs"
+	fi
+	procd_set_param nice "$niceval"
+	procd_set_param user "$user"
+	procd_set_param group "$group"
+	# 崩溃后无限重试：配置被修正、磁盘补挂载后可自愈
+	procd_set_param respawn 3600 5 0
+	# 两个都设为 1，让 Syncthing 的输出进 syslog（本脚本不传 --log-file）
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger syncthing
+}

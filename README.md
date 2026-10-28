@@ -279,6 +279,99 @@ fi
 
 ---
 
+## 补充 A、Syncthing：固件内置升级与磁盘挂载保护
+
+以前的做法是每次刷完固件、SSH 上去手动跑 `syncthing-upgrade.sh`：把 `/usr/bin/syncthing`
+换成官方 v2 二进制，再把 `/etc/init.d/syncthing` 换成带挂载保护的极简版。
+现在这两步都在**编译期**做完，刷完就能用。
+
+### A.1 为什么必须换掉 feed 里的版本
+
+`feeds/packages/utils/syncthing` 停在 **1.24.0**，是 go1.27.1 编的，带 Go 1.26+ 的
+`crypto/tls` 会话票据缺陷，运行中会持续 panic 重启。官方 v2 只发布 tar.gz、没有 ipk，
+所以只能绕过 opkg 直接替换二进制。
+
+### A.2 三个文件，覆盖到 feed 包内
+
+| 本地文件（`aarch64/Lede2512/syncthing/`） | 覆盖到 | 作用 |
+| --- | --- | --- |
+| `syncthing-bin.mk` | `feeds/packages/utils/syncthing/Makefile` | 改为下载官方 linux-arm64 预编译包，不编 Go 源码 |
+| `syncthing.init` | 同上包内 `files/syncthing.init` | 极简 procd 启动脚本，含挂载点校验 |
+| `syncthing.conf` | 同上包内 `files/syncthing.conf` | 默认 UCI：`enabled=1` / `home=/mnt/sda1/Syncthing` / GUI 8586 |
+
+三个 `cp` 都在 `2512diy-part2.sh` 末尾（`feeds install -a` 之后）。原 Makefile 会先备份成
+`Makefile.feed.bak`。
+
+效果：**不再构建 `golang/host`**（省 8~15 分钟），opkg 里版本号是真实的 2.x，
+LuCI「软件包」页不再显示 1.24.0，也就不用再 `opkg flag hold`。
+
+### A.3 跳过逻辑
+
+两种情况不会重复干预，可以放心反复编译：
+
+- Makefile 里已有 `ST-OFFICIAL-BIN` 标记 → 不再覆盖；
+- feed 的 `PKG_VERSION` 已 ≥ `ST_VER`（上游自己跟进了 2.x）→ 保留源码编译，
+  **但仍会覆盖 init**，因为挂载保护必须留在固件里。
+
+要升到更新的官方版本，只改 `2512diy-part2.sh` 里两行：
+
+```bash
+ST_VER=2.1.7                       # 改成新版本号（不带 v）
+ST_SHA256=<该版本 linux-arm64 tar.gz 的 sha256>
+```
+
+SHA256 取自 GitHub release API 的 `digest` 字段。写错会在 `make download` 阶段直接报
+hash 不匹配，不会带着坏文件往下走。
+
+### A.4 磁盘挂载保护（重点）
+
+`syncthing.init` 在 `start_service()` 里先校验 `home` 所在挂载点：
+
+```sh
+case "$home" in
+/mnt/*)
+	mp=$(echo "$home" | cut -d/ -f1-3)
+	if ! grep -q " $mp " /proc/mounts; then
+		logger -t syncthing "挂载点 $mp 未挂载，拒绝启动（避免生成新 Device ID）"
+		echo "syncthing: 挂载点 $mp 未挂载，拒绝启动" >&2
+		return 1
+	fi
+	;;
+esac
+```
+
+**为什么必须这么做**：`home` 指向外接盘上的目录，盘没挂上时那个路径只是个空目录。
+Syncthing 会在 rootfs（eMMC）里凭空创建 home、生成一套全新证书，Device ID 随之漂移，
+已配对设备全部失效，同步数据也写进 eMMC。本机历史上已因此漂移过三次。
+
+**盘确实没挂上时怎么恢复**：开机顺序不受控，外接盘有可能晚于 `START=90` 才挂上。
+确认盘已挂载后，手动重启一次服务即可：
+
+```sh
+mount | grep sda1                      # 先确认 /mnt/sda1 已挂载
+/etc/init.d/syncthing restart
+```
+
+服务被拒绝启动时 syslog 里会有一条 `挂载点 /mnt/sda1 未挂载，拒绝启动`，
+用 `logread | grep -i syncthing` 能看到。
+
+### A.5 全新刷机与 sysupgrade 的差别
+
+`/etc/config/syncthing` 是 conffile：
+
+- **sysupgrade**（保留配置）：沿用设备上已有的 `home` / `gui_address` / `enabled`，
+  A.2 里的默认值不生效；
+- **全新刷机 / 恢复出厂**：用 A.2 的默认值，`enabled=1`，开机即尝试启动。
+  若此时外接盘还没插或还没挂上，服务会拒绝启动 —— 按 A.4 的方法手动 restart。
+
+### A.6 和 `syncthing-upgrade.sh` 的关系
+
+固件里的二进制已是 v2，**不需要再跑那个脚本**。它现在的用途只剩两个：
+升级到比固件更新的版本（`sh syncthing-upgrade.sh v2.2.0`）、或者 `--check` 查状态。
+注意它内部也会重写 init 文件，内容与固件里这份一致，重写无副作用。
+
+---
+
 ## 五、N1 / X96 分开编译
 
 `编译Lede2512_FOL` 运行时可以在界面上选 `all` / `n1` / `x96`。  
@@ -337,6 +430,10 @@ aarch64/Lede2512/
   feeds.conf.default      feeds 源（luci 用的是 openwrt-25.12 分支）
   2512diy-part1.sh        feeds 之前的自定义（git 克隆）
   2512diy-part2.sh        移除包 / 克隆第三方 / 编译修复
+  syncthing/              Syncthing 补丁素材，编译期覆盖 feed 包（见「补充 A」）
+    syncthing-bin.mk      替换 Makefile：改用官方预编译二进制，不编 Go 源码
+    syncthing.init        替换 init：极简 procd 版 + home 挂载点校验
+    syncthing.conf        替换默认 UCI：enabled=1 / home=/mnt/sda1/Syncthing
 aarch64/scripts/          【GitHub 编译必须传】
   gen_config.py           .config 生成器（插件清单 + 设备参数 + 校验）
   build_plugins_cfg.py    plugins.cfg 生成器（不带参数 = 一键重建）
