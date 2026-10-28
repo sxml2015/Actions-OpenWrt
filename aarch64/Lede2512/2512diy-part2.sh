@@ -499,3 +499,52 @@ else
         echo "[part2]   原 Makefile 备份为 Makefile.feed.bak；不再构建 golang/host"
     fi
 fi
+
+#==============================================================================
+# 2026-10-28 修复：内核 6.18 把 Kerberos 库拆成独立模块 → NFS rpcsec 打包失败
+#------------------------------------------------------------------------------
+# 失败现象（内核 6.18.58，package/kernel/linux 阶段）：
+#   Package kmod-fs-nfs-common-rpcsec is missing dependencies for the following libraries:
+#   krb5.ko
+#   make[3]: *** [modules/fs.mk:534: .../kmod-fs-nfs-common-rpcsec_6.18.58-1_aarch64_generic.ipk] Error 1
+#
+# 根因链（上游源码三处都已核实，不是本地配置错）：
+#   1) Linux v6.18 crypto/krb5/Makefile: obj-$(CONFIG_CRYPTO_KRB5) += krb5.o
+#      → 产物落在 crypto/krb5/krb5.ko，是独立的 Kerberos 加密库模块。
+#   2) net/sunrpc/auth_gss/Makefile 里已经不再编译 krb5.o，
+#      即原来内嵌在 rpcsec_gss_krb5 里的 kerberos 库被搬走了。
+#   3) 上游 fs.mk 的 fs-nfs-common-rpcsec 只 FILES 了 auth_rpcgss.ko 与
+#      rpcsec_gss_krb5.ko，没有 krb5.ko；而 CONFIG_RPCSEC_GSS_KRB5 会把
+#      CONFIG_CRYPTO_KRB5 select 成 m，生出 krb5.ko，却没有任何 kmod 包认领它
+#      → ipk 依赖校验（.ko 的 depends 字段）必然报「missing ... krb5.ko」。
+#      同理会被这道校验拦下的还有 kmod-fs-nfsd（它 DEPENDS 本包）。
+#
+# 修法：给该包的 FILES 追加一行 $(LINUX_DIR)/crypto/krb5/krb5.ko。
+#   · 路径是确定的：crypto/krb5/Makefile 的 obj-$(CONFIG_CRYPTO_KRB5) += krb5.o。
+#   · 不能写成 $(wildcard ...)：wildcard 在 Makefile 解析期求值，那时内核还没编，
+#     必然展开为空，等于没修。
+#   · 不能改 KCONFIG 把 CRYPTO_KRB5 设 y：内核由 Files 标签提供预编译件，
+#     本次编译只产 rootfs，改 KCONFIG 不会重新生成内核 .ko。
+#   · 为何敢写死路径：报错本身就是「rpcsec_gss_krb5.ko 的 depends 字段里写着
+#     krb5.ko」，说明该 .ko 已被内核成功编译、只是没人打包。若将来路径再变，
+#     会在 install 阶段报 cp: cannot stat，届时按新路径改这一行即可。
+#
+# 幂等：fs.mk 里已出现 crypto/krb5/krb5.ko 就跳过；上游补好后本段自动失效。
+#==============================================================================
+FSMK=package/kernel/linux/modules/fs.mk
+if [ ! -f "$FSMK" ]; then
+    echo "[part2] 跳过 NFS rpcsec 修补：$FSMK 不存在（上游结构变化？）"
+elif grep -q 'crypto/krb5/krb5\.ko' "$FSMK"; then
+    echo "[part2] fs.mk 已含 crypto/krb5/krb5.ko，跳过插入（不重复改文件）"
+    echo "[part2]   CI 每次都是全新 clone：这条日志出现即代表上游已自行修好本缺陷，"
+    echo "[part2]   届时可删除本脚本末尾「内核 6.18 把 Kerberos 库拆成独立模块」整段"
+else
+    # 只在 rpcsec_gss_krb5.ko 那一行（FILES 末项）后面追加，AUTOLOAD 行不含 .ko 不受影响
+    sed -i 's|^\(.*rpcsec_gss_krb5\.ko\)$|\1 \\\n\t$(LINUX_DIR)/crypto/krb5/krb5.ko|' "$FSMK"
+    if grep -q 'crypto/krb5/krb5\.ko' "$FSMK"; then
+        echo "[part2] 已修补 fs.mk：kmod-fs-nfs-common-rpcsec 的 FILES 补入 crypto/krb5/krb5.ko"
+    else
+        echo "[part2] !! fs.mk 未匹配到 rpcsec_gss_krb5.ko 行，上游结构可能已变"
+        echo "[part2] !! 若仍卡在 package/kernel/linux，请手工检查 fs.mk 的 FILES 段"
+    fi
+fi
