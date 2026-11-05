@@ -372,9 +372,9 @@ mount | grep sda1                      # 先确认 /mnt/sda1 已挂载
 
 ---
 
-## 补充 B、内核 6.18 的 `kmod-fs-nfs-common-rpcsec` 打包缺陷（已自动修补）
+## 补充 B、内核 6.18 的 `kmod-fs-nfs-common-rpcsec` 打包缺陷（上游已修复，临时补丁已删除）
 
-2026-10-28 起，Lede 的内核升到 6.18.58 后，`make` 会在 `package/kernel/linux` 阶段失败：
+2026-10-28 至 11-04 期间，Lede 的内核升到 6.18.58 后，`make` 会在 `package/kernel/linux` 阶段失败：
 
 ```
 Package kmod-fs-nfs-common-rpcsec is missing dependencies for the following libraries:
@@ -383,25 +383,34 @@ make[3]: *** [modules/fs.mk:534: .../kmod-fs-nfs-common-rpcsec_6.18.58-1_aarch64
 ```
 
 **不是本地配置错。** 内核 6.18 把 Kerberos 加密库从 `rpcsec_gss_krb5` 里拆出来，单独生成
-`crypto/krb5/krb5.ko`；而 `fs.mk` 里该包的 `FILES` 仍然只有 `auth_rpcgss.ko` 和
+`crypto/krb5/krb5.ko`；而当时 `fs.mk` 里该包的 `FILES` 只有 `auth_rpcgss.ko` 和
 `rpcsec_gss_krb5.ko`，没有任何 kmod 包认领 `krb5.ko` → 被 ipk 依赖校验（`.ko` 的 `depends` 字段）拦下。
 `kmod-fs-nfsd` 依赖本包，会跟着一起失败。
 
-`2512diy-part2.sh` 末尾已自动给 `fs.mk` 的 `FILES` 补一行：
+当时在 `2512diy-part2.sh` 末尾加过一段临时补丁，给 `FILES` 补一行 `$(LINUX_DIR)/crypto/krb5/krb5.ko`。
+
+**2026-11-05 确认上游已自行修好，该临时补丁已从 `2512diy-part2.sh` 删除。** 上游 `fs.mk` 现在的写法：
 
 ```make
-$(LINUX_DIR)/crypto/krb5/krb5.ko
+  KCONFIG:= \
+        CONFIG_RPCSEC_GSS_KRB5 \
+        CONFIG_CRYPTO_KRB5@ge6.18 \
+        CONFIG_CRYPTO_KRB5ENC@ge6.18
+  FILES:= \
+        $(LINUX_DIR)/net/sunrpc/auth_gss/auth_rpcgss.ko \
+        $(LINUX_DIR)/net/sunrpc/auth_gss/rpcsec_gss_krb5.ko \
+        $(LINUX_DIR)/crypto/krb5/krb5.ko@ge6.18 \
+        $(LINUX_DIR)/crypto/krb5enc.ko@ge6.18
 ```
 
-三点说明：
+上游的修法比当初的临时补丁更完整：连 `krb5enc.ko` 一起打包，并用 `@ge6.18` 限定只在 6.18 及以后生效。
 
-- **幂等，但不会自动清理**：`fs.mk` 里已有 `crypto/krb5/krb5.ko` 就跳过，不重复插入。
-  CI 每次都是全新 clone，所以编译日志里一旦出现「上游已自行修好本缺陷」这句，
-  就说明可以手工删掉 `2512diy-part2.sh` 末尾这一段了 —— 脚本不会自己删代码。
+两点说明：
+
 - **不需要关 `nfs-kernel-server`**，也不需要改内核 KCONFIG —— 内核由 `Files` 标签提供预编译件，
   改 KCONFIG 不会重新生成 `.ko`，只有补 `FILES` 才能让这个模块被打进 ipk。
-- 若将来内核又把该库并回原模块，编译会在 install 阶段报 `cp: cannot stat .../krb5.ko`，
-  按当时的实际路径改 `2512diy-part2.sh` 里那一行即可。
+- 若将来又出现同样的 `missing ... krb5.ko`，说明上游回退了这次修复。届时在
+  `2512diy-part2.sh` 末尾重新加回「补 `FILES`」的那段即可，不要改 KCONFIG。
 
 ---
 
