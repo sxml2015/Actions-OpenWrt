@@ -501,11 +501,37 @@ else
 fi
 
 #==============================================================================
-# 2026-11-05 FileBrowser：已迁出到独立 feed
+# 2026-11-06 FileBrowser：同名包排雷（校验 + 兜底）
 #------------------------------------------------------------------------------
-# 界面、二进制包、默认配置、procd 启动脚本全部搬到
+# 界面、二进制包、默认配置、procd 启动脚本全部在独立 feed：
 #   https://github.com/sxml2015/Actions-OpenWrt-FileBrowser
-# 本仓库只在 2512diy-part1.sh 里往 feeds.conf.default 加一行 src-git，
-# 不再生成任何 FileBrowser 包。
-# 要改这个插件请去插件仓库；不要在这里重新加回来，两处会互相覆盖。
+#
+# 问题：coolsnowwolf/luci 的 openwrt-25.12 分支自带同名包 luci-app-filebrowser
+# （stokito 的 JS 版文件管理器）。scripts/feeds 对同名源包「先出现者胜」，
+# 追加在末尾的本 feed 会被静默跳过，固件里装成别人的包。
+# part1 已把本 feed 放到 feeds.conf 第一行；这里再兜底一次：
+#   1) 清掉 luci feed 的同名包链接（含 i18n 子包），避免 Kconfig 同名符号打架；
+#   2) 本 feed 的包没链接上就补建。
+# 本块在 feeds install 之后、make defconfig 之前执行，改链接仍然有效。
 #==============================================================================
+FB_APP=feeds/filebrowser/luci-app-filebrowser
+
+if [ ! -d "$FB_APP" ]; then
+    echo "[part2] !! FileBrowser：未找到 $FB_APP（feeds update 没拉到本 feed）"
+else
+    for p in package/feeds/luci/luci-app-filebrowser \
+             package/feeds/luci/luci-i18n-filebrowser-*; do
+        if [ -e "$p" ] || [ -L "$p" ]; then
+            rm -rf "$p"
+            echo "[part2] FileBrowser：已移除 luci feed 的同名包 $p"
+        fi
+    done
+
+    if [ ! -e package/feeds/filebrowser/luci-app-filebrowser ]; then
+        mkdir -p package/feeds/filebrowser
+        ln -sfn ../../../$FB_APP package/feeds/filebrowser/luci-app-filebrowser
+        echo "[part2] FileBrowser：补建链接 package/feeds/filebrowser/luci-app-filebrowser"
+    fi
+
+    echo "[part2] FileBrowser：使用 $FB_APP"
+fi
