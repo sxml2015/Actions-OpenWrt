@@ -414,6 +414,109 @@ make[3]: *** [modules/fs.mk:534: .../kmod-fs-nfs-common-rpcsec_6.18.58-1_aarch64
 
 ---
 
+## 补充 C、FileBrowser 网页文件管理（第三方界面 + 官方预编译二进制）
+
+2026-11-05 接入。来源：`https://github.com/sxml/luci-app-filebrowser`（Lua/CBI 界面）。
+
+### C.1 为什么不是「克隆下来就能用」
+
+那个仓库**只有界面，没有可执行文件**。作者在 README 里写明了：官方二进制至少 32 MB，所以 ipk 不集成。
+直接编译进固件的结果是：菜单能出现，但点开永远起不来，除非手工把 33 MB 下到设备上。
+
+它自带的两个运行文件也都有问题：
+
+| 文件 | 原样的问题 |
+|---|---|
+| `root/etc/config/filebrowser` | `executable_directory` 默认 `/tmp`。`/tmp` 是 tmpfs，重启清空 → 每次开机都要重新下载 33 MB |
+| `root/etc/init.d/filebrowser` | 不是 procd：`&` 丢后台、`kill -9` 停机、无 respawn；也没有挂载点校验 |
+
+### C.2 补齐的三处（现已位于独立 feed 仓库）
+
+> 2026-11-05 二次调整：这部分代码**已整体迁出**到独立仓库
+> `https://github.com/sxml2015/Actions-OpenWrt-FileBrowser`，
+> 作为标准 feed 提供给本固件项目。下表是迁出后的落点（路径相对插件仓库根目录）。
+
+| 落点 | 作用 |
+|---|---|
+| `filebrowser-bin/Makefile` | 下载官方 `linux-arm64-filebrowser.tar.gz`，只装 `/usr/bin/filebrowser`。不编源码、不跑 npm |
+| `luci-app-filebrowser/root/etc/config/filebrowser` | 默认配置：`executable_directory` 为 `/usr/bin`，`enable` 保持 `0` |
+| `luci-app-filebrowser/root/etc/init.d/filebrowser` | 启动脚本：procd 版，补可执行文件校验与 `/mnt` 挂载点校验 |
+
+本仓库这边只剩一行接线，写在 `2512diy-part1.sh`：
+
+```bash
+echo 'src-git filebrowser https://github.com/sxml2015/Actions-OpenWrt-FileBrowser.git' \
+    >> feeds.conf.default
+```
+
+它必须在 `feeds update` 之前执行 —— part1 正是那个时机。之后 `feeds update -a` /
+`feeds install -a` 会自动把两个包装进源码树，`make defconfig` 就能识别那两个 `CONFIG_`。
+
+### C.3 为什么不用 feeds 里的 `utils/filebrowser`
+
+feeds 里确实有这个包，但它有两个硬伤：
+
+1. `Build/Compile` 里有 `npm ci` + `npm run build`，需要 `node/host`。构建慢，且依赖 npm 网络。
+2. 它会安装 `/etc/config/filebrowser` 与 `/etc/init.d/filebrowser`，与 `luci-app-filebrowser`
+   自带的同名文件**冲突**。
+
+所以本项目的做法是：`CONFIG_PACKAGE_filebrowser` 保持 `is not set`，只用第三方界面 + 自己的二进制包。
+
+### C.4 体积代价
+
+| 项目 | 数值 |
+|---|---|
+| 官方压缩包 | 14,809,727 字节（14.1 MB） |
+| 解压后二进制 | 34,537,634 字节（32.9 MB） |
+| 固件增量 | 约 20 MB（squashfs 压缩后，随内容不同有浮动） |
+
+不需要时把 `plugins.cfg` 末尾那三行 `on` 改成 `off`，下次编译即不再包含。
+
+### C.5 首次使用
+
+1. 刷好固件，进 LuCI：**NAS → File Browser**。
+2. 默认 `enable` 是关闭的。先改密码（默认 `admin`），再打开开关，保存并应用。
+3. 默认根目录 `/root`，端口 `8088`。要改数据盘就把根目录写成 `/mnt/sda1`——
+   启动脚本会先查 `/proc/mounts`，盘没挂上则拒绝启动，不会把文件写进 rootfs。
+4. 日志在 `/var/log/filebrowser.log`，同时在 `logread` 里带 `filebrowser` 标签。
+
+### C.6 版本升级
+
+在**插件仓库**里改 `filebrowser-bin/Makefile` 两个字段：
+
+```make
+PKG_VERSION:=2.63.23
+PKG_HASH:=c55b3450b6ac07ef73b5b49f0b2955a8e755100b71af1df73f9e5d25b12fd27a
+```
+
+`PKG_HASH` 取自 GitHub release API 对应 asset 的 `digest` 字段（去掉 `sha256:` 前缀）。
+官方**不发布** `.tar.gz.sha256` 附件，不要去试。
+
+两点实测记录：
+
+- 压缩包内是**扁平结构**（`CHANGELOG.md` / `LICENSE` / `README.md` / `filebrowser`），
+  解包**不能**加 `--strip-components=1`，否则二进制会被当成目录名剥掉、装出空包。
+- 官方 v2 仍支持 `--username` / `--password`（哈希后传入），所以界面里「初始用户名/密码」有效。
+
+### C.7 为什么拆成独立仓库
+
+原先界面从 `thirdparty.cfg` 克隆、二进制包和配置由 `2512diy-part2.sh` 现场生成，改任何一处都要动固件项目。
+现在整个插件（界面 + 二进制包 + 配置 + 启动脚本）都在插件仓库里，固件项目只有一行 `src-git`。
+
+| 要改什么 | 改哪里 | 固件项目要不要动 |
+|---|---|---|
+| 升 FileBrowser 版本 | 插件仓库 `filebrowser-bin/Makefile` | 不用 |
+| 改默认端口/根目录/密码 | 插件仓库 `luci-app-filebrowser/root/etc/config/filebrowser` | 不用 |
+| 改启动逻辑 | 插件仓库 `luci-app-filebrowser/root/etc/init.d/filebrowser` | 不用 |
+| 改界面 | 插件仓库 `luci-app-filebrowser/luasrc/**` | 不用 |
+| 整个插件不要了 | 本仓库 `plugins.cfg` 末尾三个 `on` 改 `off` | 要（一行） |
+
+推送插件仓库后，固件下次编译执行 `feeds update -a` 就会取到最新代码。注意
+`/etc/config/filebrowser` 是 conffile，设备上用 sysupgrade 升级会**保留旧配置**，
+新的默认值只在全新刷机时生效。
+
+---
+
 ## 五、N1 / X96 分开编译
 
 `编译Lede2512_FOL` 运行时可以在界面上选 `all` / `n1` / `x96`。  
