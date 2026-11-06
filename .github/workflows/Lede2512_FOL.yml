@@ -233,6 +233,8 @@ jobs:
 
     - name: 下载软件包
       id: package
+      # 下载失败不阻塞整个 job：缺包会在编译阶段按需重下。
+      continue-on-error: true
       run: |
         cd openwrt
         make defconfig
@@ -243,9 +245,32 @@ jobs:
           --verify .config || true
         echo "===================================================================="
         echo ""
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        # ------------------------------------------------------------------
+        # 下载限时保护（2026.11.06）
+        #   make download -j8 在含大量 git / svn 协议包的配置下，会因多个线程
+        #   抢 dl 目录锁而挂起：不报错、不再输出、进度归零，一路拖到 Actions
+        #   单 job 的 6 小时上限被系统强杀（run #21 实测 361.5 分钟，卡在本步）。
+        #   对策：两轮下载各设硬上限（60 + 40 分钟），超时就降级，最坏 100 分钟；
+        #   仍未下完的包交给编译阶段按需重下，不再阻塞整个 job。
+        # ------------------------------------------------------------------
+        set +e
+        timeout 60m make download -j8 -k
+        rc=$?
+        if [ $rc -ne 0 ]; then
+          echo "::warning::并行下载未在 60 分钟内结束（rc=$rc），改用单线程补齐"
+          pkill -f 'make.*download' || true
+          sleep 3
+          timeout 40m make download -j1 -k
+          rc=$?
+        fi
+        if [ $rc -ne 0 ]; then
+          echo "::warning::仍有包未下载完成（rc=$rc）。缺包会在编译阶段按需重下。"
+          echo "---------- dl 目录最近变化的 8 项（供下次定位卡点） ----------"
+          ls -lt dl 2>/dev/null | head -9 || true
+        fi
+        set -e
+        find dl -size -1024c -exec ls -l {} \; || true
+        find dl -size -1024c -exec rm -f {} \; || true
         rm -rf $GITHUB_WORKSPACE/.git
         rm -rf $GITHUB_WORKSPACE/opt
         df -Th
@@ -258,7 +283,25 @@ jobs:
         rm -rf build_dir staging_dir tmp
         make clean
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        # ------------------------------------------------------------------
+        # 失败重试改为「并行补跑一轮」，不再退到 -j1 串行全量重编（2026.11.06）
+        #   build_dir 里已编好的包不会重编，第二轮只补失败的那几个（几分钟）；
+        #   而 -j1 全量重编在这套配置下远超 8 小时，等于必然撞 6h 上限，
+        #   原来「-j8 失败后退 -j1 再重来」的写法就是二次超时陷阱。
+        # ------------------------------------------------------------------
+        set +e
+        make -j$(nproc)
+        rc=$?
+        if [ $rc -ne 0 ]; then
+          echo "::warning::并行编译失败（rc=$rc），补跑一轮，失败包会打印详细日志"
+          make -j$(nproc) V=s
+          rc=$?
+        fi
+        set -e
+        if [ $rc -ne 0 ]; then
+          echo "::error::编译失败，退出码 $rc，请查看上方 V=s 段落的第一个 Error"
+          exit $rc
+        fi
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
