@@ -49,6 +49,34 @@ rm -rf feeds/packages/net/shadowsocks-libev
 # 设置ttyd免帐号登录
 sed -i 's/\/bin\/login/\/bin\/login -f root/' feeds/packages/utils/ttyd/files/ttyd.config
 
+# ---------------------------------------------------------------------------
+# ttyd 菜单位置（2026.11.07）
+#   luci-app-ttyd 的菜单 json 没写 order，LuCI 把缺省项排到「系统」菜单最底部，
+#   而 Netdata 写的是 order=10。这里给 ttyd 补一个 order=11，
+#   让它紧跟在 Netdata 下面。
+#   参考「系统」菜单现有 order：
+#     1 系统 / 2 管理权 / 10 Netdata / 45 启动项 / 46 计划任务 /
+#     50 挂载点 / 60 LED 配置 / 70 备份与升级 / 90 重启
+#   part2 在 feeds install -a 之后运行，此时目录一定存在；找不到就告警，不静默。
+# ---------------------------------------------------------------------------
+TTYD_MENU="feeds/luci/applications/luci-app-ttyd/root/usr/share/luci/menu.d/luci-app-ttyd.json"
+if [ -f "$TTYD_MENU" ]; then
+    if grep -q '"order": 11' "$TTYD_MENU"; then
+        echo "[part2] ttyd 菜单已含 order=11，跳过"
+    else
+        if awk '{print} /"admin\/system\/ttyd": [{]/ && !done {print "\t\t\"order\": 11,"; done=1}' \
+                "$TTYD_MENU" > "$TTYD_MENU.tmp" && mv "$TTYD_MENU.tmp" "$TTYD_MENU"; then
+            echo "[part2] ttyd 菜单 -> order=11（Netdata 之下）"
+        else
+            echo "[part2] !! ttyd 菜单改写失败，位置保持上游默认"
+            rm -f "$TTYD_MENU.tmp"
+        fi
+    fi
+    grep -n '"order"' "$TTYD_MENU" | head -n 3
+else
+    echo "[part2] !! 未找到 $TTYD_MENU，ttyd 菜单位置未调整"
+fi
+
 #克隆 pymumu 仓库 smartdns 20260405
 # 克隆LEDE分支的luci界面（适配旧版）
 if tp_block smartdns; then
