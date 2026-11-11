@@ -53,3 +53,42 @@ if [ -f "$FB_CONF" ]; then
 else
     echo "[part1] !! 找不到 $FB_CONF，FileBrowser 将不会进固件"
 fi
+
+#==============================================================================
+# 2026-11-12 首次开机行为（写进 base-files 的 uci-defaults，随固件生效）
+#------------------------------------------------------------------------------
+# 为什么用 uci-defaults：/etc/uci-defaults 由 /etc/init.d/boot 在 S10 执行，
+# 早于 S95/S99 的服务启动；脚本执行完自动删除，每次刷机后重跑一次。
+# 文件必须 chmod 755 —— 不可执行的文件不会被 run。
+#
+# 1) zz-disable-autostart：FileBrowser 与 Syncthing 默认不启动。
+#    这两个包的 postinst 会在打包时自动 enable（生成 /etc/rc.d/S* 链接），
+#    所以要在首次开机显式 disable；需要时到 LuCI「系统 → 启动项」里手动开启。
+#
+# 2) zz-carbon-default：默认主题固定为 Carbon。
+#    各主题包的 30_luci-theme-* 按字母序执行，design / material 排在 carbon
+#    之后，会把 luci.main.mediaurlbase 改回自己。
+#    用 zz- 前缀（排在数字和字母之后），确保在所有包自带的 uci-defaults 之后收尾。
+#==============================================================================
+UD=package/base-files/files/etc/uci-defaults
+mkdir -p "$UD"
+
+cat > "$UD/zz-disable-autostart" <<'EOF'
+#!/bin/sh
+[ -x /etc/init.d/filebrowser ] && /etc/init.d/filebrowser disable
+[ -x /etc/init.d/syncthing ] && /etc/init.d/syncthing disable
+exit 0
+EOF
+chmod 755 "$UD/zz-disable-autostart"
+
+cat > "$UD/zz-carbon-default" <<'EOF'
+#!/bin/sh
+uci -q set luci.themes.Carbon='/luci-static/carbon'
+uci -q set luci.main.mediaurlbase='/luci-static/carbon'
+uci commit luci
+exit 0
+EOF
+chmod 755 "$UD/zz-carbon-default"
+
+echo "[part1] uci-defaults 已写入：zz-disable-autostart、zz-carbon-default"
+ls -l "$UD" 2>/dev/null | tail -n 4
