@@ -10,6 +10,22 @@
 #
 name: 编译Lede2512_FOL
 
+# 最小权限（2026-11-13）：
+#   本工作流唯一需要写权限的地方是 ncipollo/release-action 上传 rootfs 到
+#   Build2512-N1 / Build2512-X96 两个 prerelease 标签 → contents: write。
+#   upload-artifact 用的是运行时 token，不需要 GITHUB_TOKEN 权限。
+#   不写这段时 GITHUB_TOKEN 会继承仓库默认（可能含更多权限），显式收窄。
+permissions:
+  contents: write
+
+# 并发控制（2026-11-13）：
+#   编译耗时 4h+，中途连点两次会让两个 run 同时写同一个 Build2512-* 标签，
+#   后完成的覆盖先完成的，日志上看不出来。这里排队而不取消：
+#   cancel-in-progress: true 会把跑到一半的编译直接杀掉，浪费更大。
+concurrency:
+  group: lede2512-build-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   repository_dispatch:
   workflow_dispatch:
@@ -38,6 +54,10 @@ env:
   # 第三方插件清单 + 开关
   THIRDPARTY_CFG: aarch64/Lede2512/thirdparty.cfg
   GEN_CONFIG: aarch64/scripts/gen_config.py
+  # 插件清单校验白名单（2026-11-13）：
+  #   make defconfig 之后，plugins.cfg 里标 on 却最终没启用的项，
+  #   只要不在这里列出来，就中止编译 —— 10 秒换 4 小时。
+  VERIFY_IGNORE: aarch64/Lede2512/verify-ignore.txt
   DIY_P1_SH: aarch64/Lede2512/2512diy-part1.sh
   DIY_P2_SH: aarch64/Lede2512/2512diy-part2.sh
   TZ: Asia/Shanghai
@@ -185,8 +205,11 @@ jobs:
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
     # 缓存按设备分开，避免两种编译参数互相污染
+    # 钉 SHA（2026-11-13）：原来跟 @main，上游一改就影响构建且无法审计。
+    #   对应 stupidloud/cachewrtbuild 的 main 分支 2026-05-10 提交。
+    #   升级办法：查 /repos/stupidloud/cachewrtbuild/commits/main 的 sha，替换此处。
     - name: 缓存加速
-      uses: stupidloud/cachewrtbuild@main
+      uses: stupidloud/cachewrtbuild@b729f807837dbc3455d02fd35192660d9b662121
       with:
         mixkey: '${{ matrix.tag }}'
         ccache: true
@@ -239,11 +262,8 @@ jobs:
         cd openwrt
         make defconfig
         echo ""
-        echo "========== 校验：插件清单 vs make defconfig 之后的最终配置 =========="
-        python3 "$GITHUB_WORKSPACE/$GEN_CONFIG" \
-          --plugins "$GITHUB_WORKSPACE/$PLUGINS_CFG" \
-          --verify .config || true
-        echo "===================================================================="
+        # 插件清单校验已移到下一步的独立 step（严格模式，失败即中止）。
+        # 本 step 带 continue-on-error: true，校验放在这里拦不住任何东西。
         echo ""
         # ------------------------------------------------------------------
         # 下载限时保护（2026.11.06）
@@ -274,6 +294,26 @@ jobs:
         rm -rf $GITHUB_WORKSPACE/.git
         rm -rf $GITHUB_WORKSPACE/opt
         df -Th
+
+    # ----------------------------------------------------------------------
+    #  严格校验插件清单（2026-11-13）
+    #    make defconfig 之后，Kconfig 会因为依赖不满足把某些包静默踢掉。
+    #    以前只打印、不阻断，于是出现「编了 4 小时、刷进去发现少插件」。
+    #    这里改成硬失败：列出没启用的项，10 秒内中止。
+    #    必须独立成 step —— 上一步带 continue-on-error: true，放在里面不会中断。
+    # ----------------------------------------------------------------------
+    - name: 严格校验插件清单（make defconfig 之后）
+      run: |
+        cd openwrt
+        if [ ! -f .config ]; then
+          echo "::error::找不到 openwrt/.config，make defconfig 未成功执行"
+          exit 1
+        fi
+        python3 "$GITHUB_WORKSPACE/$GEN_CONFIG" \
+          --plugins "$GITHUB_WORKSPACE/$PLUGINS_CFG" \
+          --verify .config \
+          --verify-strict \
+          --verify-ignore "$GITHUB_WORKSPACE/$VERIFY_IGNORE"
 
     - name: 编译固件
       id: compile
@@ -350,7 +390,10 @@ jobs:
 
     - name: 固件发布信息
       id: release
-      uses: ncipollo/release-action@v1
+      # 钉 SHA（2026-11-13）：v1 标签在 2026-11-13 时指向的提交。
+      #   注意 ncipollo/release-action 的 v1 是浮动标签，钉死后不会自动获得安全修复；
+      #   需要新特性时手动查 /repos/ncipollo/release-action/git/ref/tags/v1 的 object.sha。
+      uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd
       with:
         # 中间产物：标记为预发布，这样 Releases 页面会把它折叠到 Pre-releases 区，
         # 正式固件（Flippy 打包产出的 Lede2512-*-日期时间）排在前面。

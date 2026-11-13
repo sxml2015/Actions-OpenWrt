@@ -54,3 +54,38 @@ else
     echo "[part1] !! 找不到 $FB_CONF，FileBrowser 将不会进固件"
 fi
 
+#==============================================================================
+# 2026-11-13 Syncthing：注册 ucitrack，让「服务 → Syncthing」保存后自动重启
+#------------------------------------------------------------------------------
+# 背景（服务启停与 LuCI 启动项耦合）：
+#   · LuCI「系统 → 启动项」列的是 /etc/rc.d/S* 链接，`init.d disable` 会删链接
+#     → 页面里那一行直接消失，再从界面开不回来。所以任何情况下都不要用
+#     disable 来实现「默认不启动」—— 要用 uci 里的 enabled / enable。
+#   · 但光有开关不够：LuCI 保存配置后不会自动重启服务。
+#     FileBrowser 插件自带 ucitrack（见插件仓库 root/etc/uci-defaults），
+#     feeds 里的 luci-app-syncthing 不保证有，这里补一个，两边行为一致。
+#   · 这样「在服务页勾选 / 取消 → 保存」就等于一次完整的启停动作，
+#     完全不依赖启动项页面，也不再需要动 rc.d 链接。
+#
+# 时机：/etc/uci-defaults 由 /etc/init.d/boot 在 S10 执行，早于 S90/S99 的服务启动。
+# 幂等：先 delete 再 add，重复执行结果一致。
+#==============================================================================
+UD=package/base-files/files/etc/uci-defaults
+mkdir -p "$UD"
+
+cat > "$UD/zz-syncthing-ucitrack" <<'EOF'
+#!/bin/sh
+uci -q batch <<-EOT >/dev/null
+delete ucitrack.@syncthing[-1]
+add ucitrack syncthing
+set ucitrack.@syncthing[-1].init=syncthing
+commit ucitrack
+EOT
+rm -f /tmp/luci-indexcache
+exit 0
+EOF
+chmod 755 "$UD/zz-syncthing-ucitrack"
+
+echo "[part1] 已写入 uci-defaults：zz-syncthing-ucitrack"
+ls -l "$UD" 2>/dev/null | tail -n 3
+

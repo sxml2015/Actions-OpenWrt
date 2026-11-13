@@ -37,6 +37,29 @@ fi
 
 cd "$OPENWRT_DIR" || { echo "[第三方] 无法进入 $OPENWRT_DIR"; exit 1; }
 
+# ---------------------------------------------------------------------------
+# 克隆带重试（2026-11-13）
+#   原来克隆失败只 `continue` → 对应插件不存在 → make defconfig 静默去掉它
+#   → 编了 4 小时得到一个缺插件的固件，且日志里只有一行不起眼的 "克隆失败"。
+#   现在：3 次重试（间隔 5s / 10s），仍失败就中止构建。
+# ---------------------------------------------------------------------------
+clone_with_retry() {
+    c_url="$1"; c_br="$2"; c_dest="$3"
+    c_i=1
+    while [ "$c_i" -le 3 ]; do
+        rm -rf "$c_dest"
+        if [ -z "$c_br" ] || [ "$c_br" = "-" ]; then
+            git clone --depth=1 "$c_url" "$c_dest" && return 0
+        else
+            git clone --depth=1 -b "$c_br" "$c_url" "$c_dest" && return 0
+        fi
+        echo "[第三方] !! 克隆失败（第 $c_i/3 次）：$c_url ${c_br:+[$c_br]}"
+        [ "$c_i" -lt 3 ] && sleep $((c_i * 5))
+        c_i=$((c_i + 1))
+    done
+    return 1
+}
+
 count=0
 skip=0
 while IFS= read -r raw || [ -n "$raw" ]; do
@@ -72,13 +95,15 @@ while IFS= read -r raw || [ -n "$raw" ]; do
 
     echo "--------------------------------------------------------------"
     echo "[第三方] 克隆 $url  ($branch)  →  $dest"
-    rm -rf "$dest"
-    if [ -z "$branch" ] || [ "$branch" = "-" ]; then
-        git clone --depth=1 "$url" "$dest" || { echo "[第三方] !! 克隆失败：$url"; continue; }
-    else
-        git clone --depth=1 -b "$branch" "$url" "$dest" || { echo "[第三方] !! 克隆失败：$url ($branch)"; continue; }
+    if ! clone_with_retry "$url" "$branch" "$dest"; then
+        echo "[第三方] !!! 3 次重试均失败，中止构建：$url ($branch)"
+        echo "::error::第三方插件源克隆失败，构建中止（继续下去会静默少插件）：$url ($branch)"
+        exit 1
     fi
-    [ -d "$dest" ] || { echo "[第三方] !! 克隆目录不存在，跳过复制映射"; continue; }
+    [ -d "$dest" ] || {
+        echo "::error::克隆返回成功但目录不存在：$dest"
+        exit 1
+    }
 
     if [ -n "$maps" ]; then
         old_ifs="$IFS"
@@ -95,7 +120,14 @@ while IFS= read -r raw || [ -n "$raw" ]; do
             echo "[第三方]   复制 $dest/$src  →  $dst"
             mkdir -p "$(dirname "$dst")"
             rm -rf "$dst"
-            cp -rf "$dest/$src" "$dst" || echo "[第三方]   !! 复制失败：$src"
+            if [ ! -e "$dest/$src" ]; then
+                echo "::error::thirdparty.cfg 的复制映射写错了，源不存在：$dest/$src（来自 $url）"
+                exit 1
+            fi
+            cp -rf "$dest/$src" "$dst" || {
+                echo "::error::复制失败：$dest/$src → $dst"
+                exit 1
+            }
             IFS=','
         done
         IFS="$old_ifs"

@@ -14,6 +14,19 @@
 #
 name: F打包_Lede2512_N1
 
+# 最小权限（2026-11-13）：本工作流只用 GITHUB_TOKEN 之外的两件事要看清楚 ——
+#   · ncipollo/release-action 创建固件 Release        → contents: write
+#   · dev-drprasad/delete-older-releases 删旧 Release → contents: write
+#   · Mattraks/delete-workflow-runs 用的是 secrets.RELEASES_TOKEN，不占 GITHUB_TOKEN
+permissions:
+  contents: write
+
+# 并发控制（2026-11-13）：连点两次会同时从同一个 Build2512-N1 拉 rootfs、
+# 各自发布一个 Release，后完成的把先完成的覆盖掉。这里排队不取消。
+concurrency:
+  group: flippy-n1-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   repository_dispatch:
   workflow_dispatch:
@@ -153,7 +166,9 @@ jobs:
 
     - name: 固件发布信息
       id: release
-      uses: ncipollo/release-action@v1
+      # 钉 SHA（2026-11-13）：v1 浮标在该日指向的提交。v1 是浮动标签，钉死后
+      #   不会自动获得安全修复；升级时查 /repos/ncipollo/release-action/git/ref/tags/v1 的 object.sha。
+      uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd
       with:
         name: ${{ env.FILE_NAME }}-${{ env.DATE }}
         # 正式固件：明确标为非预发布，确保在 Releases 页面排在编译中间产物前面。
@@ -175,7 +190,9 @@ jobs:
         artifacts: ${{ env.FIRMWARE }}/*
 
     - name: 删除旧版本
-      uses: dev-drprasad/delete-older-releases@master
+      # 钉 SHA（2026-11-13）：该仓库已停止维护（最后提交 2024-07-13，README 明示）。
+      #   钉死后上游动静影响不到构建；将来若换活跃替代品，再单独评估。
+      uses: dev-drprasad/delete-older-releases@49df26ac460ea2b7f943d0e33244981fcdfaeea3
       if: env.DELETE_RELEASE == 'true'
       with:
         keep_latest: 2                               # 要保留的最新版本数 0删除所有版本
@@ -185,7 +202,8 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}  # 令牌
 
     - name: 删除旧的工作流程运行和工件
-      uses: Mattraks/delete-workflow-runs@main
+      # 钉 SHA（2026-11-13）：main 分支 2026-06-05 提交。
+      uses: Mattraks/delete-workflow-runs@0cf693bc9909e5e867ee8f27b813224ba862939c
       if: env.DELETE_ARTIFACTS == 'true'
       with:
         token: ${{ secrets.RELEASES_TOKEN }}    # 令牌

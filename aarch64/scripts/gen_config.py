@@ -197,6 +197,12 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--report", default=None)
     ap.add_argument("--verify", default=None)
+    ap.add_argument("--verify-strict", action="store_true",
+                    help="配合 --verify：清单标 on 但最终未启用的项只要有一个"
+                         "（且不在 --verify-ignore 白名单里）就返回 1，用于阻断编译")
+    ap.add_argument("--verify-ignore", default=None,
+                    help="配合 --verify-strict：白名单文件，每行一个包名"
+                         "（'#' 开头为注释）；列出的项允许最终未启用")
     ap.add_argument("--print-opt", action="store_true",
                     help="只打印该设备的 CONFIG_TARGET_OPTIMIZATION 取值，供工作流复用")
     ap.add_argument("--list-devices", action="store_true",
@@ -281,6 +287,21 @@ def main():
                 auto_kept.append(key)
             elif state == "on" and real.get(key) != "on":
                 missing.append(key)
+
+        # ---- 白名单：允许「标 on 但客观上不会启用」的项（平台不适用等） ----
+        #   key 一律规范成 CONFIG_xxx 形式，与 real / want 的键同一口径；
+        #   写包名（luci-app-xxx）或写完整 CONFIG_PACKAGE_luci-app-xxx 都可以。
+        ignore = set()
+        if args.verify_ignore and os.path.isfile(args.verify_ignore):
+            for line in read_lines(args.verify_ignore):
+                s = line.split("#", 1)[0].strip()
+                if not s:
+                    continue
+                if not s.upper().startswith("CONFIG_"):
+                    s = "CONFIG_PACKAGE_" + s
+                ignore.add(s)
+        blocked = [k for k in missing if k not in ignore]
+
         log("")
         log("=" * 78)
         log("[配置校验] 插件清单 vs $( make defconfig ) 之后的最终 .config")
@@ -295,13 +316,25 @@ def main():
             log("")
             log("· !! 清单里标 on，但最终没能启用（%d 项，请检查包名/源是否存在）：" % len(missing))
             for k in missing:
-                log("    - " + k)
+                log("    - " + k + ("   [白名单，忽略]" if k in ignore else ""))
             log("")
             log("  常见原因：包不在 feeds 里（需要在 thirdparty.cfg 增加第三方插件源）、")
             log("            或依赖不满足导致 Kconfig 隐藏该项。")
         else:
             log("· 清单里标 on 的项全部启用成功。")
         log("=" * 78)
+
+        # ---- 严格模式：把「该在却没在」的项变成硬失败 ----
+        #   目的：在 make defconfig 之后 10 秒内拦住，而不是编了 4 小时才发现缺插件。
+        if args.verify_strict and blocked:
+            log("")
+            log("!! 严格校验失败：%d 个标 on 的插件未启用，中止编译。" % len(blocked))
+            log("   处置三选一：")
+            log("     1) 确实需要它  -> 检查包名，以及 thirdparty.cfg 里对应的第三方源")
+            log("     2) 本来不该编  -> 在 plugins.cfg 里改成 off")
+            log("     3) 未启用正常  -> 把包名加进白名单：%s"
+                % (args.verify_ignore or "（未指定 --verify-ignore）"))
+            return 1
         return 0
 
     # ---------------- 生成模式 ----------------

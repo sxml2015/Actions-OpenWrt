@@ -1,5 +1,16 @@
 #2025.10.28
 name: 提取Lede2512-config
+
+# 最小权限（2026-11-13）：本工作流只读仓库（产出走 upload-artifact）；
+#   删除旧运行用的是 secrets.RELEASES_TOKEN，不占 GITHUB_TOKEN 的写权限。
+permissions:
+  contents: read
+
+# 并发控制：反复点会起多个 tmate 会话，排队即可
+concurrency:
+  group: ssh-config-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   repository_dispatch:
   workflow_dispatch:
@@ -100,7 +111,8 @@ jobs:
         sed -i 's/OpenWrt/MRG AutoBuild ${{ env.DATE1 }} @ OpenWrt/g' package/lean/default-settings/files/zzz-default-settings
         
     - name: SSH远程连接（配置固件）
-      uses: csexton/debugger-action@master
+      # 钉 SHA（2026-11-13）：该 action 自 2020-07-19 后无更新（最后提交即此 SHA）。
+      uses: csexton/debugger-action@0de54ee5b983a6f5a84a5a0c1e708422059837e0
       if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
       env:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -124,7 +136,8 @@ jobs:
       run: df -hT
 
     - name: 删除旧的工作流程运行和工件
-      uses: Mattraks/delete-workflow-runs@main
+      # 钉 SHA（2026-11-13）：main 分支 2026-06-05 提交。
+      uses: Mattraks/delete-workflow-runs@0cf693bc9909e5e867ee8f27b813224ba862939c
       if: env.DELETE_ARTIFACTS == 'true'
       with:
         token: ${{ secrets.RELEASES_TOKEN }}    # 令牌

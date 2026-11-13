@@ -25,6 +25,12 @@ on:
 permissions:
   contents: write
 
+# 并发控制（2026-11-13）：两个重建同时跑会各提交一次 plugins.cfg，后者覆盖前者，
+#   而且两边都基于旧内容生成，容易丢改动。排队执行。
+concurrency:
+  group: rebuild-plugins
+  cancel-in-progress: false
+
 env:
   TZ: Asia/Shanghai
 
