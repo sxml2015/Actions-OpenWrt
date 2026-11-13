@@ -315,6 +315,53 @@ jobs:
           --verify-strict \
           --verify-ignore "$GITHUB_WORKSPACE/$VERIFY_IGNORE"
 
+    # ----------------------------------------------------------------------
+    #  上游修复自检（2026-11-13 临时回退的出口，仅提示、不阻断编译）
+    #    part1 把 tools/gnulib 等回退到 bed88351 之前，是为绕过 gettext host
+    #    编译失败。这里每次编译自动比对上游这两个目录有没有再动过，并直接
+    #    给出「已修复 / 未修复」的结论 —— 不需要记任何日期或哈希。
+    #    查询失败/被限流都不影响编译（continue-on-error），只少一条提示。
+    # ----------------------------------------------------------------------
+    - name: 上游修复自检（自动给结论）
+      continue-on-error: true
+      run: |
+        echo "========== 上游 gnulib / gettext 修复状态自检 =========="
+        API=https://api.github.com/repos/coolsnowwolf/lede/commits
+        RAW=https://raw.githubusercontent.com/coolsnowwolf/lede/master
+        changed=0
+        for pair in "tools/gnulib:bed88351" "package/libs/gettext-full:63fe018a"; do
+          p=${pair%%:*}
+          c=${pair##*:}
+          line=$(curl -fsSL --max-time 20 "$API?path=${p}&per_page=1" 2>/dev/null \
+            | python3 -c "import json,sys;d=json.load(sys.stdin)[0];print(d['sha'][:8],d['commit']['author']['date'],d['commit']['message'].splitlines()[0][:46])" 2>/dev/null)
+          if [ -z "$line" ]; then
+            echo "  [跳过] $p 查询失败（限流或网络），本次无法判断"
+            continue
+          fi
+          echo "  $p"
+          echo "    最新提交: $line"
+          echo "    当时基准: $c"
+          if [ "${line%% *}" != "$c" ]; then
+            changed=1
+            echo "    -> 上游有改动"
+          else
+            echo "    -> 与当时一致，未改动"
+          fi
+        done
+        gv=$(curl -fsSL --max-time 20 "$RAW/tools/gnulib/Makefile" 2>/dev/null | grep -m1 -oE 'stable-[0-9]+')
+        echo "  master 上 tools/gnulib 当前版本: ${gv:-查询失败}"
+        echo "-------------------------------------------------------"
+        if [ "$changed" = "1" ]; then
+          echo "【结论】上游已改动 gnulib / gettext —— 可能已修复。"
+          echo "        下一步：删掉 2512diy-part1.sh 里 TMP-PIN 标记区，编一次验证；"
+          echo "        若 gettext 仍报 exitfail.h 打不上，加回去即可。"
+          echo "::warning::上游已改动 gnulib/gettext，可尝试移除 TMP-PIN 回退"
+        else
+          echo "【结论】未修复 —— 上游这两个目录自 2026-11-13 起没有新提交，"
+          echo "        TMP-PIN 回退必须保留，本次不用做任何事。"
+        fi
+        echo "======================================================="
+
     - name: 编译固件
       id: compile
       run: |
