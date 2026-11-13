@@ -25,10 +25,81 @@
 #    不要为了让编译「过」而把真需要的插件塞进来 —— 那等于关掉了这道防线。
 # ============================================================================
 
-# 暂无条目。若首次严格校验报出「未启用」的项，先判断是真需要还是真不需要：
-#   真需要   -> 修包名 / 补第三方源
-#   真不需要 -> plugins.cfg 里改 off
-#   都正常   -> 把包名加到下面（保留注释说明原因，半年后还记得为什么）
+# ---------------------------------------------------------------------------
+# 2026-11-13 首次开严格校验，报出 22 项「标 on 但未启用」。
 #
-# 示例（不要直接取消注释，包名换成实际报出来的）：
-# luci-app-example-xxx        # 仅 x86 平台有，armv8 上不存在，属正常
+# 判定依据（不是猜的）：本次编译日志的 `feeds install -a` 阶段逐条列了装进来
+# 的包，这 22 项对应的源码**一条都没有出现过**，说明包本身不存在于当前
+# feeds 里，不是依赖冲突被 Kconfig 隐藏。
+#
+# 重要：run #24（4789544）编译成功时也是这个状态 —— 这 22 项从来没有进过固件。
+# 是这次新加的校验把它们第一次暴露出来，不是本次改动弄坏了什么。
+#
+# 因此新增规则：以后若报出的包**在 feeds install 日志里搜不到**，按「不存在」
+# 处理，加白名单；若搜得到但没启用，那才是依赖问题，必须去修，不许加白名单。
+# ---------------------------------------------------------------------------
+
+# --- A. turboacc 全家（6 项）------------------------------------------------
+# coolsnowwolf/luci 的 openwrt-25.12 分支已不含 luci-app-turboacc（feeds install
+# 记录里没有它）。另外本平台是 armv8（armsr），shortcut-fe / fast-classifier
+# 这类硬件加速只支持 mips 与 arm32，即使补回源码也编不进。
+# 替代方案：软件流量分载直接用「网络 → 防火墙 → Flow Offloading」，
+# BBR 由内核 kmod 提供，都不需要这个插件。
+luci-app-turboacc
+luci-app-turboacc_INCLUDE_BBR_CCA
+luci-app-turboacc_INCLUDE_DNSFORWARDER
+luci-app-turboacc_INCLUDE_DNSPROXY
+luci-app-turboacc_INCLUDE_OFFLOADING
+luci-app-turboacc_INCLUDE_PDNSD
+
+# --- B. wireguard 的旧界面包（2 项）-----------------------------------------
+# lede 早已把 luci-app-wireguard 并入 luci-proto-wireguard（清单第 243 行的
+# luci-proto-wireguard 本次编译成功、没有报错）。功能不缺，只是老包名不存在。
+luci-app-wireguard
+luci-i18n-wireguard-zh-cn
+
+# --- C. docker 的旧依赖（1 项）----------------------------------------------
+# 新版 luci-app-dockerman 不再依赖 luci-lib-docker（feeds 里已无此包）。
+# plugins.cfg 第 43 行那句「关闭会导致 dockerman 不可用」的注释已过时，
+# dockerman 本次编译正常。
+luci-lib-docker
+
+# --- D. lede 未收录的协议包（2 项）------------------------------------------
+# 这两个在 OpenWrt 官方 luci 里有，coolsnowwolf/luci 没有，且都属于极少数
+# 场景（3x-ui 承载、链路聚合）。kmod-bonding 本身是 =y 的，缺的只是 LuCI 界面。
+luci-proto-3x
+luci-proto-bonding
+
+# --- E. passwall / passwall2 已被删除的子选项（4 项）------------------------
+# 两个父包本次都成功启用（日志有 Installing package 'luci-app-passwall2'），
+# 但新版已把 SingBox / tuic / IPv6 NAT 改成按需自动依赖，不再提供这些开关，
+# 所以 defconfig 里没有这些符号。功能不受影响。
+luci-app-passwall2_INCLUDE_IPv6_Nat
+luci-app-passwall2_INCLUDE_SingBox
+luci-app-passwall2_INCLUDE_tuic_client
+luci-app-passwall_INCLUDE_tuic_client
+
+# --- F. ssr-plus 已被删除的子选项（3 项）------------------------------------
+# 同 E：父包 luci-app-ssr-plus 正常启用，但 DNS2SOCKS / DNSPROXY 这几个子选项
+# 在新版 helloworld 里已不存在（改用自动依赖）。
+luci-app-ssr-plus_INCLUDE_DNS2SOCKS
+luci-app-ssr-plus_INCLUDE_DNS2SOCKS_RUST
+luci-app-ssr-plus_INCLUDE_DNSPROXY
+
+# --- G. 源码在 kenzok8/small 里，但 part2 没复制进来（3 项）-----------------
+# 2026-11-13 日志显示 part2 确实克隆了 small-package，但只 cp 了
+# brook / ssocks / pdnsd-alt / trojan-go / dns2tcp 五个目录（脚本第 100~104 行），
+# 这三个不在复制清单里，所以 package/ 下没有它们。
+# 想要的话在 2512diy-part2.sh 里加：
+#     cp -rf small-package/luci-app-sms-tool package/luci-app-sms-tool
+#     cp -rf small-package/luci-app-ssr-mudb-server package/luci-app-ssr-mudb-server
+#     cp -rf small-package/luci-app-hypermodem package/luci-app-hypermodem
+# 然后把这四行从白名单删掉。hypermodem 还需要 qmodem feed（feeds.conf 里默认注释）。
+luci-app-sms-tool
+luci-app-ssr-mudb-server
+luci-app-hypermodem
+
+# --- H. 已从 lede 移除（1 项）-----------------------------------------------
+# package/lean 下已无 luci-app-wrtbwmon（part2 第 39 行的 rm -rf 是旧版本残留，
+# 现在删都删不到）。若需要带宽监控，已启用的 nlbwmon 是同类功能。
+luci-app-wrtbwmon
