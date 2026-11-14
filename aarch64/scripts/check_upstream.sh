@@ -114,6 +114,14 @@ if [ "$pins" = "0" ]; then
 elif [ "$changed" -gt 0 ]; then
     echo "  【结论】有钉子对应的上游位置被改动了，按上面「处理」那一行做即可。"
     echo "::warning::上游已改动 $changed 项修补位置，可尝试移除对应钉子（详见日志）"
+    if [ "$unknown" -gt 0 ]; then
+        echo "  （另有 $unknown 条查询失败，未能核对，钉子先不要动。）"
+    fi
+elif [ "$unknown" -gt 0 ]; then
+    # 有查询失败却说「全部未修复」是错话，会让人误以为核对过了
+    echo "  【结论】$unknown 条查询失败（限流/网络），这几条没核对上；其余未修复。"
+    echo "  钉子全部保留，本次不用做任何事；下次编译会重新查。"
+    echo "::warning::上游自检有 $unknown 条查询失败，未能判断是否已修复"
 else
     echo "  【结论】全部未修复，所有钉子继续保留，本次不用做任何事。"
 fi
